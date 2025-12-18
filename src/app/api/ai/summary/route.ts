@@ -262,10 +262,13 @@ async function extractPdfTextWithRetry(pdfUrl: string, maxRetries: number = 3): 
 async function extractPdfText(pdfUrl: string): Promise<string> {
   console.log("[PDF] Starting extraction for:", pdfUrl)
   
+  // Use BSE_SERVICE_URL environment variable for production
+  const bseServiceUrl = process.env.BSE_SERVICE_URL || "http://localhost:5000"
+  
   // Try Python service first (more reliable for BSE PDFs)
   try {
-    console.log("[PDF] Trying Python PDF service...")
-    const pythonResponse = await fetch("http://localhost:5000/api/pdf/extract", {
+    console.log("[PDF] Trying Python PDF service at:", bseServiceUrl)
+    const pythonResponse = await fetch(`${bseServiceUrl}/api/pdf/extract`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: pdfUrl }),
