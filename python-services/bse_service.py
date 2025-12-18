@@ -10,24 +10,33 @@ import os
 import json
 from datetime import datetime
 
-# Add the bsedata directory to the Python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'bsedata'))
-
+# Try importing bsedata from pip package first, then local
 try:
     from bsedata.bse import BSE
-except ImportError as e:
-    print(f"ERROR: bsedata library not found: {e}")
-    print("Make sure the bsedata repository is cloned at: d:\\SPEEDY FINANCE\\CascadeProjects\\windsurf-project\\bsedata")
-    sys.exit(1)
+except ImportError:
+    # Fallback to local path for development
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'bsedata'))
+    try:
+        from bsedata.bse import BSE
+    except ImportError as e:
+        print(f"WARNING: bsedata library not found: {e}")
+        BSE = None
 
-from bulk_deals_scraper import BulkDealsScraper
+# Import bulk deals modules (scraper may fail without Selenium, that's OK)
+try:
+    from bulk_deals_scraper import BulkDealsScraper
+    bulk_deals_scraper = BulkDealsScraper()
+except Exception as e:
+    print(f"WARNING: BulkDealsScraper not available: {e}")
+    bulk_deals_scraper = None
+
 from bulk_deals_database import BulkDealsDatabase, initialize_database, create_database_api
 
 app = Flask(__name__)
 CORS(app)
 
-bse = BSE(update_codes=False)
-bulk_deals_scraper = BulkDealsScraper()
+# Initialize BSE if available
+bse = BSE(update_codes=False) if BSE else None
 
 # Initialize bulk deals database with scheduler
 bulk_deals_db = initialize_database()
@@ -45,6 +54,8 @@ def health():
 @app.route('/api/quote/<scrip_code>', methods=['GET'])
 def get_quote(scrip_code):
     """Get live quote for a stock"""
+    if not bse:
+        return jsonify({'success': False, 'error': 'BSE service not available'}), 503
     try:
         quote_data = bse.getQuote(scrip_code)
         return jsonify({
@@ -60,6 +71,8 @@ def get_quote(scrip_code):
 @app.route('/api/gainers', methods=['GET'])
 def get_gainers():
     """Get top gainers"""
+    if not bse:
+        return jsonify({'success': False, 'error': 'BSE service not available'}), 503
     try:
         gainers = bse.topGainers()
         return jsonify({
@@ -76,6 +89,8 @@ def get_gainers():
 @app.route('/api/losers', methods=['GET'])
 def get_losers():
     """Get top losers"""
+    if not bse:
+        return jsonify({'success': False, 'error': 'BSE service not available'}), 503
     try:
         losers = bse.topLosers()
         return jsonify({
@@ -113,6 +128,8 @@ def get_indices():
             'error': f'Invalid category. Valid categories: {", ".join(valid_categories)}'
         }), 400
     
+    if not bse:
+        return jsonify({'success': False, 'error': 'BSE service not available'}), 503
     try:
         indices_data = bse.getIndices(category)
         return jsonify({
@@ -128,6 +145,8 @@ def get_indices():
 @app.route('/api/verify-scrip/<code>', methods=['GET'])
 def verify_scrip(code):
     """Verify if a scrip code is valid"""
+    if not bse:
+        return jsonify({'success': False, 'error': 'BSE service not available'}), 503
     try:
         company_name = bse.verifyScripCode(code)
         if company_name:
@@ -160,6 +179,8 @@ def get_bhav_copy():
             'error': 'Date parameter required in YYYY-MM-DD format'
         }), 400
     
+    if not bse:
+        return jsonify({'success': False, 'error': 'BSE service not available'}), 503
     try:
         from datetime import datetime
         date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
