@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: speedy-finance-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: DEBUG
+        value: "False"
+    healthCheckPath: /health

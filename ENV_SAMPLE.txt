@@ -1,0 +1,9 @@
+# Copy this to .env.local in the project root
+# Never commit your real keys
+
+# Stock Quote API
+RAPID_API_KEY=
+RAPID_API_HOST=
+
+# OpenAI for AI Summary
+OPENAI_API_KEY=your-openai-api-key-here

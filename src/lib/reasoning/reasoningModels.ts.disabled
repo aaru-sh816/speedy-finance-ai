@@ -1,0 +1,278 @@
+import OpenAI from "openai"
+
+interface Citation {
+  id: number
+  fileId: string
+  filename: string
+  snippet: string
+  score: number
+  sourceUrl?: string
+  page?: number
+  attributes?: any
+}
+
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+})
+
+export interface ReasoningOptions {
+  model?: "gpt-4-turbo-preview" | "gpt-4" | "gpt-4-32k" | "gpt-3.5-turbo"
+  effort?: "low" | "medium" | "high"
+  temperature?: number
+  maxTokens?: number
+  includeReasoningSummary?: boolean
+  requireCitations?: boolean
+}
+
+export interface ReasoningPrompt {
+  system: string
+  user: string
+  sources?: string
+  requireCitations?: boolean
+}
+
+export interface ReasoningResponse {
+  content: string
+  reasoning?: string
+  citations: number[]
+  tokens: {
+    input: number
+    output: number
+    reasoning?: number
+    total: number
+  }
+}
+
+/**
+ * Generate a reasoning-powered response with citations
+ */
+export async function generateReasoningResponse(
+  prompt: ReasoningPrompt,
+  options: ReasoningOptions = {}
+): Promise<ReasoningResponse> {
+  const {
+    model = "gpt-4-turbo-preview",
+    temperature = 0.2,
+    maxTokens = 2000,
+    requireCitations = true
+  } = options
+
+  try {
+    // Build the system prompt with citation requirements
+    let systemPrompt = prompt.system
+    if (requireCitations && prompt.sources) {
+      systemPrompt += `
+
+CRITICAL REQUIREMENTS:
+1. Use ONLY information from the provided sources.
+2. Every factual statement MUST end with citation markers like [1] or [2,3].
+3. If information is not available in sources, clearly state this.
+4. Be precise, numerate, and follow the 7 Cs of communication.
+5. Structure your response with clear markdown formatting.`
+    }
+
+    // Build the user message with sources
+    let userMessage = prompt.user
+    if (prompt.sources) {
+      userMessage = `Question: ${prompt.user}
+
+Available Sources:
+${prompt.sources}
+
+Provide a comprehensive answer using the above sources.`
+    }
+
+    // Call OpenAI with reasoning-optimized parameters
+    const completion = await client.chat.completions.create({
+      model,
+      temperature,
+      max_tokens: maxTokens,
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt
+        },
+        {
+          role: "user",
+          content: userMessage
+        }
+      ],
+      // Enable structured reasoning
+      response_format: { type: "text" },
+      seed: 42, // For consistency in reasoning
+    })
+
+    const response = completion.choices[0].message.content || ""
+    
+    // Extract citation references from response
+    const citations = extractCitationNumbers(response)
+
+    return {
+      content: response,
+      citations,
+      tokens: {
+        input: completion.usage?.prompt_tokens || 0,
+        output: completion.usage?.completion_tokens || 0,
+        total: completion.usage?.total_tokens || 0
+      }
+    }
+  } catch (error) {
+    console.error("Reasoning generation failed:", error)
+    throw error
+  }
+}
+
+/**
+ * Generate a financial analysis with structured reasoning
+ */
+export async function generateFinancialAnalysis(
+  announcement: {
+    headline: string
+    summary?: string
+    category: string
+    company: string
+  },
+  sources: Citation[],
+  options: ReasoningOptions = {}
+): Promise<{
+  summary: string
+  keyInsights: string[]
+  verdict: {
+    type: string
+    reasoning: string
+    confidence: number
+  }
+  citations: Map<string, number[]>
+}> {
+  const sourcesText = sources
+    .map((s, i) => `[${i + 1}] ${s.snippet}`)
+    .join("\n\n")
+
+  const prompt = {
+    system: `You are Speedy Finance AI, a world-class financial analyst specializing in Indian markets.
+Analyze the provided announcement and sources to generate:
+1. A concise summary (max 40 words) following the 7 Cs
+2. 3-5 key insights with citations
+3. A verdict with reasoning
+
+Focus on numerical data, material changes, and market impact.`,
+    user: `Company: ${announcement.company}
+Category: ${announcement.category}
+Headline: ${announcement.headline}
+${announcement.summary ? `Summary: ${announcement.summary}` : ""}`,
+    sources: sourcesText,
+    requireCitations: true
+  }
+
+  const response = await generateReasoningResponse(prompt, {
+    ...options,
+    model: "gpt-4-turbo-preview",
+    temperature: 0.3,
+    maxTokens: 1500
+  })
+
+  // Parse structured response
+  const sections = response.content.split("\n\n")
+  const summary = sections[0]?.replace(/^#+\s*/, "") || ""
+  
+  // Extract key insights
+  const keyInsights: string[] = []
+  const insightsSection = sections.find(s => s.includes("Key Insights") || s.includes("insights"))
+  if (insightsSection) {
+    const lines = insightsSection.split("\n").slice(1)
+    lines.forEach(line => {
+      const cleaned = line.replace(/^[-*•]\s*/, "").trim()
+      if (cleaned) keyInsights.push(cleaned)
+    })
+  }
+
+  // Extract verdict
+  let verdictType = "neutral"
+  let verdictReasoning = ""
+  let confidence = 70
+
+  const verdictSection = sections.find(s => 
+    s.toLowerCase().includes("verdict") || 
+    s.toLowerCase().includes("impact")
+  )
+  
+  if (verdictSection) {
+    if (verdictSection.includes("positive") || verdictSection.includes("bullish")) {
+      verdictType = "positive"
+      confidence = 80
+    } else if (verdictSection.includes("negative") || verdictSection.includes("bearish")) {
+      verdictType = "negative"
+      confidence = 75
+    }
+    verdictReasoning = verdictSection.split("\n")[1] || verdictSection
+  }
+
+  // Build citation map
+  const citationMap = new Map<string, number[]>()
+  citationMap.set("summary", extractCitationNumbers(summary))
+  keyInsights.forEach((insight, i) => {
+    citationMap.set(`insight_${i}`, extractCitationNumbers(insight))
+  })
+  citationMap.set("verdict", extractCitationNumbers(verdictReasoning))
+
+  return {
+    summary: summary.slice(0, 200), // Enforce max length
+    keyInsights: keyInsights.slice(0, 5),
+    verdict: {
+      type: verdictType,
+      reasoning: verdictReasoning.slice(0, 150),
+      confidence
+    },
+    citations: citationMap
+  }
+}
+
+/**
+ * Extract citation numbers from text
+ */
+function extractCitationNumbers(text: string): number[] {
+  const regex = /\[(\d+(?:,\s*\d+)*)\]/g
+  const matches = text.matchAll(regex)
+  const numbers = new Set<number>()
+  
+  for (const match of matches) {
+    const refs = match[1].split(",").map(n => parseInt(n.trim()))
+    refs.forEach(r => numbers.add(r))
+  }
+  
+  return Array.from(numbers).sort((a, b) => a - b)
+}
+
+/**
+ * Format response with enhanced citation visibility
+ */
+export function formatWithCitations(
+  text: string,
+  citations: Citation[]
+): string {
+  let formatted = text
+
+  // Enhance citation markers
+  citations.forEach((c, i) => {
+    const num = i + 1
+    const regex = new RegExp(`\\[${num}\\]`, "g")
+    formatted = formatted.replace(regex, `**[${num}]**`)
+  })
+
+  // Add citation footer
+  if (citations.length > 0) {
+    formatted += "\n\n---\n### 📚 Sources\n"
+    citations.forEach((c, i) => {
+      formatted += `**[${i + 1}]** ${c.filename}`
+      if (c.attributes?.companyName) {
+        formatted += ` - ${c.attributes.companyName}`
+      }
+      if (c.sourceUrl) {
+        formatted += ` ([View PDF](${c.sourceUrl}))`
+      }
+      formatted += "\n"
+    })
+  }
+
+  return formatted
+}

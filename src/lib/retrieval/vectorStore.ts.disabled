@@ -1,0 +1,295 @@
+import OpenAI from "openai"
+
+const client = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY!,
+})
+
+export interface VectorStoreConfig {
+  name: string
+  description?: string
+}
+
+export interface FileAttributes {
+  scripCode: string
+  announcementId: string
+  companyName: string
+  category: string
+  subCategory?: string
+  date: number // Unix timestamp
+  sourceUrl?: string
+  exchange?: string
+  fileType: "pdf" | "text" | "html"
+}
+
+export interface SearchOptions {
+  query: string
+  maxResults?: number
+  scripCode?: string
+  announcementIds?: string[]
+  dateRange?: { start: number; end: number }
+  categories?: string[]
+  scoreThreshold?: number
+  rewriteQuery?: boolean
+}
+
+export interface Citation {
+  id: number
+  fileId: string
+  filename: string
+  snippet: string
+  score: number
+  sourceUrl?: string
+  page?: number
+  attributes?: FileAttributes
+}
+
+/**
+ * Create or get existing vector store for BSE announcements
+ */
+export async function ensureVectorStore(): Promise<string> {
+  const storeName = "BSE_Announcements_KB"
+  
+  try {
+    // Check if we already have the store ID in env
+    if (process.env.OPENAI_VECTOR_STORE_ID) {
+      // Verify it exists
+      try {
+        await client.beta.vectorStores.retrieve(process.env.OPENAI_VECTOR_STORE_ID)
+        return process.env.OPENAI_VECTOR_STORE_ID
+      } catch (e) {
+        console.log("Stored vector store ID invalid, creating new one")
+      }
+    }
+
+    // List existing stores to find our store
+    const stores = await client.beta.vectorStores.list()
+    const existing = stores.data.find((s: any) => s.name === storeName)
+    
+    if (existing) {
+      console.log(`Found existing vector store: ${existing.id}`)
+      return existing.id
+    }
+
+    // Create new vector store
+    const vectorStore = await client.beta.vectorStores.create({
+      name: storeName,
+      expires_after: {
+        anchor: "last_active_at",
+        days: 30 // Auto-expire after 30 days of inactivity
+      }
+    })
+
+    console.log(`Created new vector store: ${vectorStore.id}`)
+    console.log("⚠️ Add OPENAI_VECTOR_STORE_ID to your .env.local:", vectorStore.id)
+    
+    return vectorStore.id
+  } catch (error) {
+    console.error("Failed to ensure vector store:", error)
+    throw error
+  }
+}
+
+/**
+ * Upload and index a file to the vector store
+ */
+export async function uploadToVectorStore(
+  vectorStoreId: string,
+  filePath: string | Buffer,
+  attributes: FileAttributes,
+  chunkingStrategy?: {
+    maxChunkSizeTokens?: number
+    chunkOverlapTokens?: number
+  }
+): Promise<string> {
+  try {
+    // Upload file to OpenAI
+    const file = await client.files.create({
+      file: filePath,
+      purpose: "assistants" as any, // OpenAI SDK type issue
+    })
+
+    // Add to vector store with attributes
+    const vectorFile = await client.beta.vectorStores.files.createAndPoll(
+      vectorStoreId,
+      {
+        file_id: file.id,
+        chunking_strategy: chunkingStrategy ? {
+          type: "static",
+          static: {
+            max_chunk_size_tokens: chunkingStrategy.maxChunkSizeTokens || 800,
+            chunk_overlap_tokens: chunkingStrategy.chunkOverlapTokens || 400,
+          }
+        } : undefined,
+      }
+    )
+
+    // Store attributes mapping (in production, use a database)
+    // For now, we'll use the file metadata
+    await client.files.update(file.id, {
+      metadata: attributes as any
+    })
+
+    console.log(`Indexed file ${file.id} with attributes:`, attributes)
+    return file.id
+  } catch (error) {
+    console.error("Failed to upload to vector store:", error)
+    throw error
+  }
+}
+
+/**
+ * Search the vector store with semantic search
+ */
+export async function searchVectorStore(
+  vectorStoreId: string,
+  options: SearchOptions
+): Promise<Citation[]> {
+  try {
+    // Build attribute filters
+    const filters: any[] = []
+    
+    if (options.scripCode) {
+      filters.push({
+        type: "eq",
+        key: "scripCode",
+        value: options.scripCode
+      })
+    }
+
+    if (options.announcementIds?.length) {
+      filters.push({
+        type: "in",
+        key: "announcementId",
+        value: options.announcementIds
+      })
+    }
+
+    if (options.categories?.length) {
+      filters.push({
+        type: "in",
+        key: "category",
+        value: options.categories
+      })
+    }
+
+    if (options.dateRange) {
+      filters.push({
+        type: "and",
+        filters: [
+          {
+            type: "gte",
+            key: "date",
+            value: options.dateRange.start
+          },
+          {
+            type: "lte",
+            key: "date",
+            value: options.dateRange.end
+          }
+        ]
+      })
+    }
+
+    // Perform search using file search (vector stores don't have direct search yet)
+    // We'll use the Assistants API for now
+    const assistant = await client.beta.assistants.create({
+      model: "gpt-4o",
+      tools: [{ type: "file_search" }],
+      tool_resources: {
+        file_search: {
+          vector_store_ids: [vectorStoreId]
+        }
+      }
+    })
+
+    const thread = await client.beta.threads.create({
+      messages: [{
+        role: "user",
+        content: options.query
+      }]
+    })
+
+    const run = await client.beta.threads.runs.createAndPoll(thread.id, {
+      assistant_id: assistant.id,
+      max_prompt_tokens: 10000,
+      tools: [{
+        type: "file_search",
+        file_search: {
+          max_num_results: options.maxResults || 10,
+          ranking_options: {
+            score_threshold: options.scoreThreshold || 0.5,
+            ranker: "default_2024_08_21"
+          }
+        }
+      }]
+    })
+
+    // Get messages to extract citations
+    const messages = await client.beta.threads.messages.list(thread.id)
+    const assistantMessage = messages.data.find(m => m.role === "assistant")
+    
+    const citations: Citation[] = []
+    if (assistantMessage?.content?.[0]?.type === "text") {
+      const annotations = assistantMessage.content[0].text.annotations || []
+      
+      for (const [i, annotation] of annotations.entries()) {
+        if (annotation.type === "file_citation") {
+          citations.push({
+            id: i + 1,
+            fileId: annotation.file_citation.file_id,
+            filename: `Document ${i + 1}`,
+            snippet: annotation.text,
+            score: 0.8, // Default score
+            sourceUrl: undefined,
+            page: undefined,
+            attributes: undefined
+          })
+        }
+      }
+    }
+
+    // Clean up
+    await client.beta.assistants.del(assistant.id)
+    await client.beta.threads.del(thread.id)
+
+    return citations
+  } catch (error) {
+    console.error("Vector store search failed:", error)
+    return []
+  }
+}
+
+/**
+ * Format citations for inclusion in prompts
+ */
+export function formatCitationsAsContext(citations: Citation[]): string {
+  return citations
+    .map((c, i) => {
+      const header = `[${i + 1}] ${c.filename}${c.page ? ` (Page ${c.page})` : ""}`
+      const meta = []
+      if (c.attributes?.companyName) meta.push(`Company: ${c.attributes.companyName}`)
+      if (c.attributes?.date) meta.push(`Date: ${new Date(c.attributes.date * 1000).toLocaleDateString()}`)
+      if (c.score) meta.push(`Relevance: ${Math.round(c.score * 100)}%`)
+      
+      return `${header}
+${meta.length ? meta.join(" | ") + "\n" : ""}
+${c.snippet}
+---`
+    })
+    .join("\n\n")
+}
+
+/**
+ * Extract citation references from AI response
+ */
+export function extractCitationReferences(text: string): number[] {
+  const regex = /\[(\d+)\]/g
+  const matches = text.matchAll(regex)
+  const refs = new Set<number>()
+  
+  for (const match of matches) {
+    refs.add(parseInt(match[1]))
+  }
+  
+  return Array.from(refs).sort((a, b) => a - b)
+}
