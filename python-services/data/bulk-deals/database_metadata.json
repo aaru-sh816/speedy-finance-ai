@@ -1,13 +1,13 @@
 {
-  "last_updated": "2025-12-18T18:57:26.297235",
+  "last_updated": "2025-12-19T02:03:12.705841",
   "total_deals": 182338,
   "date_range": {
-    "start": "16-Dec-2025",
+    "start": "2012-05-24",
     "end": "2025-12-18"
   },
   "exchanges": {
     "NSE": 194,
     "BSE": 182144
   },
-  "unique_dates": 3365
+  "unique_dates": 3363
 }
