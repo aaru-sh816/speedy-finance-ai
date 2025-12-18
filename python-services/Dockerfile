@@ -16,9 +16,6 @@ COPY scheduler.py .
 # Create data directory
 RUN mkdir -p data/bulk-deals
 
-# Copy existing database if available
-COPY data/ data/ 2>/dev/null || true
-
 ENV PORT=8080
 ENV DEBUG=False
 
