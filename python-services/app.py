@@ -1,5 +1,5 @@
 """
-Minimal BSE Bulk Deals API Service
+BSE Data API Service
 """
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -9,6 +9,16 @@ from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
+
+# Try to import bsedata for market data
+try:
+    from bsedata.bse import BSE
+    bse = BSE(update_codes=False)
+    BSE_AVAILABLE = True
+except ImportError:
+    bse = None
+    BSE_AVAILABLE = False
+    print("WARNING: bsedata not available - market data endpoints disabled")
 
 # Load bulk deals database
 DATABASE_PATH = os.path.join(os.path.dirname(__file__), 'data', 'bulk-deals', 'bulk_deals_database.json')
@@ -26,8 +36,53 @@ def health():
     return jsonify({
         'status': 'healthy',
         'service': 'speedy-finance-backend',
-        'version': '1.0.0'
+        'version': '1.0.0',
+        'bse_available': BSE_AVAILABLE
     })
+
+@app.route('/api/gainers', methods=['GET'])
+def get_gainers():
+    """Get top gainers"""
+    if not BSE_AVAILABLE:
+        return jsonify({'success': False, 'error': 'BSE service not available'}), 503
+    try:
+        gainers = bse.topGainers()
+        return jsonify({
+            'success': True,
+            'data': gainers,
+            'count': len(gainers)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/losers', methods=['GET'])
+def get_losers():
+    """Get top losers"""
+    if not BSE_AVAILABLE:
+        return jsonify({'success': False, 'error': 'BSE service not available'}), 503
+    try:
+        losers = bse.topLosers()
+        return jsonify({
+            'success': True,
+            'data': losers,
+            'count': len(losers)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/quote/<scrip_code>', methods=['GET'])
+def get_quote(scrip_code):
+    """Get live quote for a stock"""
+    if not BSE_AVAILABLE:
+        return jsonify({'success': False, 'error': 'BSE service not available'}), 503
+    try:
+        quote_data = bse.getQuote(scrip_code)
+        return jsonify({
+            'success': True,
+            'data': quote_data
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/bulk-deals/database', methods=['GET'])
 def get_database_deals():
