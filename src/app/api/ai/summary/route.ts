@@ -9,12 +9,87 @@ import {
 
 export const dynamic = "force-dynamic"
 
+// Use GPT-4o-mini for efficient PDF understanding
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini"
+
 // Cache for AI summaries
 const summaryCache = new Map<string, { summary: AISummary & { pdfAnalyzed: boolean }; timestamp: number }>()
 const CACHE_TTL = 3600_000 // 1 hour
-// Cache for extracted PDF text (by URL)
+// Cache for uploaded PDF file IDs (pdfUrl -> { fileId, timestamp })
+const pdfFileCache = new Map<string, { fileId: string; timestamp: number }>()
+const PDF_FILE_TTL = 30 * 60 * 1000 // 30 minutes
+// Cache for extracted PDF text (by URL) - fallback
 const pdfTextCache = new Map<string, { text: string; timestamp: number; success: boolean }>()
 const PDF_TTL = 24 * 3600_000 // 24 hours
+
+/**
+ * Upload PDF directly to OpenAI Files API for native PDF understanding
+ * This is more efficient than extracting text separately
+ */
+async function uploadPdfToOpenAI(pdfUrl: string, openaiKey: string): Promise<string | null> {
+  try {
+    // Check cache first
+    const cached = pdfFileCache.get(pdfUrl)
+    if (cached && Date.now() - cached.timestamp < PDF_FILE_TTL) {
+      console.log("[PDF] Using cached OpenAI file ID:", cached.fileId)
+      return cached.fileId
+    }
+
+    console.log("[PDF] Fetching PDF for OpenAI upload:", pdfUrl)
+    // Fetch the PDF
+    const response = await fetch(pdfUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://www.bseindia.com/",
+        "Accept": "application/pdf",
+      },
+      signal: AbortSignal.timeout(30000),
+    })
+    if (!response.ok) throw new Error(`PDF fetch failed: ${response.status}`)
+    
+    const arrayBuf = await response.arrayBuffer()
+    const buffer = Buffer.from(arrayBuf)
+    console.log(`[PDF] Downloaded ${buffer.length} bytes`)
+    
+    // Extract filename from URL
+    const urlParts = pdfUrl.split("/")
+    const filename = urlParts[urlParts.length - 1] || "document.pdf"
+    
+    // Create a Blob/File for upload
+    const blob = new Blob([buffer], { type: "application/pdf" })
+    const formData = new FormData()
+    formData.append("file", blob, filename)
+    formData.append("purpose", "user_data")
+    
+    // Upload to OpenAI Files API
+    console.log("[PDF] Uploading to OpenAI Files API...")
+    const uploadResponse = await fetch("https://api.openai.com/v1/files", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${openaiKey}`,
+      },
+      body: formData,
+    })
+    
+    if (!uploadResponse.ok) {
+      const err = await uploadResponse.text()
+      console.error("[PDF] OpenAI file upload failed:", err)
+      return null
+    }
+    
+    const uploadResult = await uploadResponse.json()
+    const fileId = uploadResult.id
+    
+    // Cache the file ID
+    pdfFileCache.set(pdfUrl, { fileId, timestamp: Date.now() })
+    console.log("[PDF] Uploaded to OpenAI, file ID:", fileId)
+    
+    return fileId
+  } catch (e: any) {
+    console.error("[PDF] uploadPdfToOpenAI failed:", e.message)
+    return null
+  }
+}
 
 interface SummaryRequest {
   headline: string
@@ -54,20 +129,38 @@ export async function POST(request: Request) {
     // Clear PDF cache on force refresh
     if (forceRefresh && pdfUrl) {
       pdfTextCache.delete(pdfUrl)
+      pdfFileCache.delete(pdfUrl)
     }
 
-    // Try to get PDF content with retry logic
-    let extractedPdfContent = pdfContent
+    const openaiKey = process.env.OPENAI_API_KEY
     let pdfAnalyzed = false
     let pdfExtractionAttempted = false
-    
-    if (pdfUrl && !extractedPdfContent) {
+    let pdfFileId: string | null = null
+    let extractedPdfContent = pdfContent || ""
+    let source = "rule-based"
+
+    // Try to upload PDF directly to OpenAI (most efficient method)
+    if (pdfUrl && openaiKey) {
       pdfExtractionAttempted = true
-      extractedPdfContent = await extractPdfTextWithRetry(pdfUrl, 3)
+      console.log("[Summary] Uploading PDF to OpenAI for native understanding...")
+      pdfFileId = await uploadPdfToOpenAI(pdfUrl, openaiKey)
+      if (pdfFileId) {
+        pdfAnalyzed = true
+        console.log("[Summary] PDF uploaded successfully, will use native PDF understanding")
+      } else {
+        // Fallback: Try text extraction via Render
+        console.log("[Summary] OpenAI upload failed, falling back to text extraction...")
+        extractedPdfContent = await extractPdfTextWithRetry(pdfUrl, 2)
+        pdfAnalyzed = extractedPdfContent.length > 100
+      }
+    } else if (pdfUrl && !openaiKey) {
+      // No OpenAI key, try text extraction
+      pdfExtractionAttempted = true
+      extractedPdfContent = await extractPdfTextWithRetry(pdfUrl, 2)
       pdfAnalyzed = extractedPdfContent.length > 100
     }
 
-    // Generate AI summary using our verdict system
+    // Generate AI summary using our verdict system (base)
     const aiSummary = analyzeAnnouncement(
       headline,
       summary || "",
@@ -80,19 +173,33 @@ export async function POST(request: Request) {
     aiSummary.pdfAnalyzed = pdfAnalyzed
     aiSummary.pdfExtractionAttempted = pdfExtractionAttempted
 
-    // Try to enhance with OpenAI if API key is available
-    const openaiKey = process.env.OPENAI_API_KEY
-    let source = "rule-based"
-    
-    if (openaiKey && (extractedPdfContent || summary)) {
+    // Try to enhance with OpenAI - use PDF file if available, otherwise use extracted text
+    if (openaiKey && (pdfFileId || extractedPdfContent || summary)) {
       try {
-        const enhancedJson = await generateOpenAISummary(
-          openaiKey,
-          headline,
-          summary || "",
-          extractedPdfContent,
-          category
-        )
+        let enhancedJson: string | null = null
+        
+        if (pdfFileId) {
+          // Use native PDF understanding with GPT-4o-mini
+          console.log("[Summary] Generating summary using native PDF understanding...")
+          enhancedJson = await generateOpenAISummaryWithPdf(
+            openaiKey,
+            headline,
+            summary || "",
+            pdfFileId,
+            category
+          )
+          source = "openai+pdf-native"
+        } else {
+          // Use text-based summary
+          enhancedJson = await generateOpenAISummary(
+            openaiKey,
+            headline,
+            summary || "",
+            extractedPdfContent,
+            category
+          )
+          source = pdfAnalyzed ? "openai+pdf" : "openai"
+        }
         if (enhancedJson) {
           try {
             // Clean the JSON string - remove any markdown code blocks and fix common issues
@@ -626,6 +733,64 @@ EXTRACT key numbers EXACTLY as written. Identify:
 CRITICAL: Copy numbers EXACTLY (₹5.48 not ₹48, 15.5% not 15%).
 
 OUTPUT JSON: {"headline":"2-3 sentences explaining the key impact with *exact numbers* and investor implications","sentiment":"positive|negative|neutral","keyInsights":["Primary actionable insight","Secondary insight"],"riskFactors":["Specific risk if any"],"strengths":["Positive signal"],"challenges":["Challenge if any"]}`
+}
+
+/**
+ * Generate enhanced summary using OpenAI with native PDF file understanding
+ * This uploads the PDF to OpenAI and uses GPT-4o-mini's native PDF reading ability
+ */
+async function generateOpenAISummaryWithPdf(
+  apiKey: string,
+  headline: string,
+  summary: string,
+  pdfFileId: string,
+  category?: string
+): Promise<string> {
+  console.log("[Summary] Using native PDF understanding with file:", pdfFileId)
+  
+  const categoryPrompt = getCategoryPrompt(category || "", headline)
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      messages: [
+        { role: "system", content: categoryPrompt },
+        { 
+          role: "user", 
+          content: [
+            {
+              type: "file",
+              file: { file_id: pdfFileId }
+            },
+            {
+              type: "text",
+              text: `Analyze this PDF document and return JSON summary.\n\nAnnouncement Headline: ${headline}\n\nBSE Summary: ${summary || "Not provided"}\n\nPlease extract key financial information from the PDF and provide analysis.`
+            }
+          ]
+        }
+      ],
+      max_tokens: 600,
+      temperature: 0.2,
+      response_format: { type: "json_object" }
+    }),
+  })
+
+  if (!response.ok) {
+    const err = await response.text()
+    console.error("[Summary] OpenAI PDF analysis failed:", err)
+    throw new Error(`OpenAI API error: ${response.status}`)
+  }
+
+  const data = await response.json()
+  const generatedSummary = data.choices?.[0]?.message?.content?.trim()
+  console.log("[Summary] Native PDF analysis complete")
+
+  return postProcessSummary(generatedSummary || "")
 }
 
 /**
