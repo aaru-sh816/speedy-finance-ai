@@ -63,6 +63,25 @@ def get_quote(scrip_code):
             'data': quote_data
         })
     except Exception as e:
+        # Fallback: Try direct BSE API fetch
+        try:
+            import requests
+            url = f"https://api.bseindia.com/BseIndiaAPI/api/StockReachGraph/w?scripcode={scrip_code}&flag=0&fromdate=&todate=&seression=COM"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://www.bseindia.com/',
+                'Accept': 'application/json'
+            }
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                return jsonify({
+                    'success': True,
+                    'data': data,
+                    'source': 'direct_api'
+                })
+        except:
+            pass
         return jsonify({
             'success': False,
             'error': str(e)

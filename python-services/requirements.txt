@@ -1,7 +1,7 @@
 Flask==3.0.0
 Flask-CORS==4.0.0
 gunicorn==21.2.0
-bsedata==0.5.0
+bsedata
 requests==2.31.0
 beautifulsoup4==4.12.2
 pandas==2.1.3
