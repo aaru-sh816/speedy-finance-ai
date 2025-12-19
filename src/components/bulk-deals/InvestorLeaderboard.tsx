@@ -6,8 +6,11 @@ import {
   TrendingUp, TrendingDown, Users, Building2, Crown, 
   Trophy, Medal, Award, ChevronRight, Sparkles, 
   ArrowUpRight, ArrowDownRight, BarChart3, Target,
-  Zap, Star, Flame
+  Zap, Star, Flame, Brain, Bell
 } from "lucide-react"
+import { Sparkline, generateMockSparklineData } from "./Sparkline"
+import { FollowButton } from "./FollowButton"
+import { predictDealSuccess, getPredictionDisplay, type DealFeatures } from "@/lib/bulk-deals/aiPredictions"
 
 type InvestorType = "all" | "individual" | "institutional"
 
@@ -170,10 +173,40 @@ export function InvestorLeaderboard({ investors, loading, onRefresh }: Props) {
                 {inv.name.split(' ').slice(0, 3).join(' ')}
               </h3>
 
-              {/* Total Value */}
-              <div className="text-lg sm:text-xl font-bold text-white mb-2">
-                {rupeeCompact(inv.totalValue)}
+              {/* Total Value + Sparkline */}
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-lg sm:text-xl font-bold text-white">
+                  {rupeeCompact(inv.totalValue)}
+                </div>
+                <Sparkline 
+                  data={generateMockSparklineData(100, 100 + inv.avgReturn, 8)} 
+                  width={50} 
+                  height={20} 
+                />
               </div>
+
+              {/* AI Prediction Badge */}
+              {(() => {
+                const prediction = predictDealSuccess({
+                  investorType: inv.type,
+                  investorHistoricalWinRate: inv.winRate,
+                  investorAvgReturn: inv.avgReturn,
+                  investorTotalDeals: inv.totalDeals,
+                  side: inv.buyDeals > inv.sellDeals ? "BUY" : "SELL",
+                  dealValue: inv.totalValue,
+                }, inv.name)
+                const display = getPredictionDisplay(prediction)
+                return (
+                  <div className={clsx(
+                    "flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-semibold mb-2",
+                    display.bgColor, display.color
+                  )}>
+                    <Brain className="h-3 w-3" />
+                    <span>AI: {prediction.score}%</span>
+                    <span>{display.emoji}</span>
+                  </div>
+                )
+              })()}
 
               {/* Performance Metrics */}
               <div className="space-y-1.5">
