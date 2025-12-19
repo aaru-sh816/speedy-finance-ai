@@ -55,8 +55,8 @@ export function SidebarNav({ activeId = "announcements", newCount, onCollapseCha
     <>
       {/* Sidebar */}
       <nav 
-        className={`fixed left-0 top-0 h-full glass-sidebar flex flex-col items-center py-4 z-40 transition-all duration-300 ease-in-out ${
-          collapsed ? "w-0 -translate-x-full" : "w-16"
+        className={`fixed right-0 top-0 h-full glass-sidebar flex flex-col items-center py-4 z-40 transition-all duration-300 ease-in-out ${
+          collapsed ? "w-0 translate-x-full" : "w-16"
         }`}
       >
       {/* Logo */}
@@ -103,14 +103,14 @@ export function SidebarNav({ activeId = "announcements", newCount, onCollapseCha
               {/* Tooltip */}
               <div
                 className={`
-                  absolute left-14 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg 
+                  absolute right-14 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg 
                   bg-zinc-900 text-white text-sm font-medium whitespace-nowrap
                   transition-all duration-200 pointer-events-none
-                  ${isHovered ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-2"}
+                  ${isHovered ? "opacity-100 translate-x-0" : "opacity-0 translate-x-2"}
                 `}
               >
                 {item.label}
-                <div className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1 w-2 h-2 bg-zinc-900 rotate-45" />
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1 w-2 h-2 bg-zinc-900 rotate-45" />
               </div>
 
               {/* Badge */}
@@ -135,13 +135,13 @@ export function SidebarNav({ activeId = "announcements", newCount, onCollapseCha
         <button
           onClick={toggleCollapse}
           className={`fixed top-1/2 -translate-y-1/2 z-50 flex items-center justify-center transition-all duration-300 ease-in-out group ${
-            collapsed ? "left-0" : "left-14"
+            collapsed ? "right-0" : "right-14"
           }`}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           <div className="relative">
             {/* Half-pill shape */}
-            <div className={`h-12 w-6 rounded-r-full bg-zinc-800/90 border border-l-0 border-zinc-700/50 flex items-center justify-center backdrop-blur-sm shadow-lg group-hover:bg-zinc-700/90 transition-all ${
+            <div className={`h-12 w-6 rounded-l-full bg-zinc-800/90 border border-r-0 border-zinc-700/50 flex items-center justify-center backdrop-blur-sm shadow-lg group-hover:bg-zinc-700/90 transition-all ${
               collapsed ? "translate-x-0" : ""
             }`}>
               {collapsed ? (

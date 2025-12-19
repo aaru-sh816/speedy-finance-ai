@@ -15,6 +15,7 @@ import { AISummaryPanel } from "@/components/ai-summary-panel"
 import { SpeedyPipChat } from "@/components/speedy-pip-chat"
 import { TradingViewChart, ChartPlaceholder } from "@/components/trading-view-chart"
 import { FeyEnhancedQuote } from "@/components/fey/FeyEnhancedQuote"
+import { ShareMenu } from "@/components/share-menu"
 
 interface CompanyData {
   scripCode: string
@@ -90,7 +91,12 @@ export default function CompanyPage() {
       try {
         // Fetch company info + announcements from company API
         console.log(`[Company Page] Fetching data for scripCode: ${scripCode}`)
-        const companyRes = await fetch(`/api/bse/company/${scripCode}`)
+        const companyRes = await fetch(`/api/bse/company/${scripCode}`, {
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          }
+        })
         
         if (companyRes.ok) {
           const data = await companyRes.json()
@@ -122,6 +128,21 @@ export default function CompanyPage() {
                 setCompany(prev => prev ? { ...prev, companyName: fallbackName } : prev)
               }
             }
+          } else {
+            // If no announcements in response, try fetching directly
+            const annRes = await fetch(`/api/bse/announcements?scripCode=${scripCode}&days=30`, {
+              headers: {
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
+              }
+            })
+            if (annRes.ok) {
+              const annData = await annRes.json()
+              if (annData.announcements?.length > 0) {
+                setAnnouncements(annData.announcements)
+                setSelectedAnnouncement(annData.announcements[0])
+              }
+            }
           }
           
           // Fetch quote for the symbol
@@ -131,6 +152,34 @@ export default function CompanyPage() {
           fetchCorporateActions(scripCode)
         } else {
           console.error(`[Company Page] Failed to fetch: ${companyRes.status}`)
+          // Try fetching directly from announcements API as fallback
+          const annRes = await fetch(`/api/bse/announcements?scripCode=${scripCode}&days=30`, {
+            headers: {
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache'
+            }
+          })
+          if (annRes.ok) {
+            const annData = await annRes.json()
+            if (annData.announcements?.length > 0) {
+              setAnnouncements(annData.announcements)
+              setSelectedAnnouncement(annData.announcements[0])
+              // Use first announcement's company info
+              const ann = annData.announcements[0]
+              setCompany({
+                scripCode,
+                symbol: ann.ticker || scripCode,
+                companyName: ann.company || `Company ${scripCode}`,
+                industry: "",
+                sector: "",
+                group: "",
+                faceValue: null,
+                isin: "",
+                lastPrice: null,
+                tradingViewSymbol: null,
+              })
+            }
+          }
         }
       } catch (e) {
         console.error("[Company Page] Error:", e)
@@ -291,6 +340,7 @@ export default function CompanyPage() {
                 >
                   <BarChart2 className="h-4 w-4" />
                 </a>
+                <ShareMenu url={window.location.href} title={`${company?.companyName || scripCode} (${company?.symbol || scripCode}) - Speedy Finance AI`} />
                 <button className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all">
                   <Bookmark className="h-4 w-4" />
                 </button>

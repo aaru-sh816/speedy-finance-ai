@@ -82,6 +82,9 @@ const CATEGORY_COLORS: Record<string, string> = {
   "Dividend": "bg-pink-500/15 text-pink-400",
   "Analyst/Investor Meet": "bg-indigo-500/15 text-indigo-400",
   "Intimation": "bg-amber-500/15 text-amber-400",
+  "Order": "bg-emerald-500/15 text-emerald-400",
+  "Allotment": "bg-violet-500/15 text-violet-400",
+  "Company Update": "bg-blue-500/15 text-blue-400",
 }
 
 type Quote = {
