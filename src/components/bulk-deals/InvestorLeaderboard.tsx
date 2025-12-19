@@ -39,7 +39,7 @@ interface Investor {
   winRate: number
   avgReturn: number
   totalPnL: number
-  deals: Deal[]
+  deals?: Deal[]
 }
 
 interface Props {
