@@ -24,7 +24,7 @@ interface CompanyData {
   industry?: string
   sector?: string
   group?: string
-  faceValue?: number
+  faceValue?: number | null
   isin?: string
   lastPrice?: number | null
   tradingViewSymbol?: string | null // Validated symbol for TradingView charts
