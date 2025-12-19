@@ -11,7 +11,7 @@ import {
 } from "@/lib/ai/verdict"
 import { getCategoryEmoji, getKeywordEmoji } from "@/lib/ai/summaryFormatter"
 import type { BSEImpact } from "@/lib/bse/types"
-import { RefreshCw, FileText, Sparkles, CheckCircle, XCircle, Loader2 } from "lucide-react"
+import { RefreshCw, FileText, Sparkles, CheckCircle, XCircle, Loader2, Maximize2 } from "lucide-react"
 
 interface AISummaryPanelProps {
   headline: string
@@ -399,12 +399,11 @@ export function AISummaryPanel({
             {onFullScreenChat && (
               <button
                 onClick={onFullScreenChat}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-500 text-xs text-white font-medium hover:opacity-90 transition-all shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-500 text-sm text-white font-medium hover:opacity-90 transition-all shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40"
                 title="Open Full-Screen AI Chat"
               >
-                <Sparkles className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Full-Screen Chat</span>
-                <span className="sm:hidden">Chat</span>
+                <Maximize2 className="h-4 w-4" />
+                <span>Full-Screen Chat</span>
               </button>
             )}
           </div>
