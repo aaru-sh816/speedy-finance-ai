@@ -2,8 +2,12 @@
 
 import { useEffect, useMemo, useState, useCallback } from "react"
 import Link from "next/link"
-import { Search, Filter, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Calendar, Users, Building2, Activity, ChevronLeft, ChevronRight, RefreshCw, ExternalLink, Database, Sparkles } from "lucide-react"
+import { Search, Filter, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Calendar, Users, Building2, Activity, ChevronLeft, ChevronRight, RefreshCw, ExternalLink, Database, Sparkles, BarChart3, Target, Zap } from "lucide-react"
 import { BulkDealsAIBar } from "@/components/bulk-deals-ai-bar"
+import { InvestorLeaderboard } from "@/components/bulk-deals/InvestorLeaderboard"
+import { DealPerformanceTable } from "@/components/bulk-deals/DealPerformanceTable"
+import { PerformanceSummary } from "@/components/bulk-deals/PerformanceSummary"
+import { classifyInvestor } from "@/lib/bulk-deals/investorClassifier"
 
 type Deal = {
   date: string
@@ -291,25 +295,76 @@ export default function BulkDealsPage() {
     const uniqueCompanies = new Set(filtered.map(d => d.scripCode)).size
     const uniquePersons = new Set(filtered.map(d => d.clientName)).size
     
-    // Calculate top investors
-    const investorMap = new Map<string, { name: string; totalValue: number; buyValue: number; sellValue: number; dealCount: number }>()
+    // Calculate top investors with classification
+    const investorMap = new Map<string, { 
+      name: string; 
+      type: "individual" | "institutional" | "unknown";
+      totalValue: number; 
+      buyValue: number; 
+      sellValue: number; 
+      totalDeals: number;
+      buyDeals: number;
+      sellDeals: number;
+      winners: number;
+      losers: number;
+      winRate: number;
+      avgReturn: number;
+      totalPnL: number;
+    }>()
+    
     for (const d of filtered) {
       const value = (d.quantity || 0) * (d.price || 0)
-      const existing = investorMap.get(d.clientName) || { name: d.clientName, totalValue: 0, buyValue: 0, sellValue: 0, dealCount: 0 }
+      const classification = classifyInvestor(d.clientName)
+      const existing = investorMap.get(d.clientName) || { 
+        name: d.clientName, 
+        type: classification.type,
+        totalValue: 0, 
+        buyValue: 0, 
+        sellValue: 0, 
+        totalDeals: 0,
+        buyDeals: 0,
+        sellDeals: 0,
+        winners: 0,
+        losers: 0,
+        winRate: 0,
+        avgReturn: 0,
+        totalPnL: 0,
+      }
       existing.totalValue += value
-      existing.dealCount++
-      if (d.side === 'BUY') existing.buyValue += value
-      else existing.sellValue += value
+      existing.totalDeals++
+      if (d.side === 'BUY') {
+        existing.buyValue += value
+        existing.buyDeals++
+      } else {
+        existing.sellValue += value
+        existing.sellDeals++
+      }
       investorMap.set(d.clientName, existing)
     }
+    
     const topInvestors = Array.from(investorMap.values())
       .sort((a, b) => b.totalValue - a.totalValue)
-      .slice(0, 10)
+      .slice(0, 50)
     
     // Big money deals (>= ₹10 Cr)
     const bigMoneyDeals = filtered.filter(d => (d.quantity || 0) * (d.price || 0) >= 1e8)
     
-    return { buyDeals: buyDeals.length, sellDeals: sellDeals.length, totalBuyValue, totalSellValue, uniqueCompanies, uniquePersons, topInvestors, bigMoneyDeals: bigMoneyDeals.length }
+    // Count by investor type
+    const individualCount = topInvestors.filter(i => i.type === 'individual').length
+    const institutionalCount = topInvestors.filter(i => i.type === 'institutional').length
+    
+    return { 
+      buyDeals: buyDeals.length, 
+      sellDeals: sellDeals.length, 
+      totalBuyValue, 
+      totalSellValue, 
+      uniqueCompanies, 
+      uniquePersons, 
+      topInvestors, 
+      bigMoneyDeals: bigMoneyDeals.length,
+      individualCount,
+      institutionalCount
+    }
   }, [filtered])
   
   const paginated = useMemo(() => {
@@ -406,51 +461,12 @@ export default function BulkDealsPage() {
             </div>
           </div>
 
-          {/* Top Investors - Minimal Scrollable */}
+          {/* Smart Money Tracker - Investor Leaderboard with Type Tabs */}
           {stats.topInvestors && stats.topInvestors.length > 0 && (
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-amber-400" />
-                  <span className="text-sm font-medium text-white">Top Investors</span>
-                  {stats.bigMoneyDeals > 0 && (
-                    <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 text-[10px]">
-                      🔥 {stats.bigMoneyDeals}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                {stats.topInvestors.slice(0, 10).map((inv, i) => (
-                  <Link
-                    key={inv.name}
-                    href={`/bulk-deals/person/${encodeURIComponent(inv.name)}`}
-                    className="group bg-zinc-800/50 hover:bg-zinc-800 border border-white/5 hover:border-cyan-500/30 rounded-xl p-4 transition-all"
-                  >
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={clsx(
-                        "w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold",
-                        i === 0 ? "bg-gradient-to-br from-amber-400 to-orange-500 text-black" :
-                        i === 1 ? "bg-gradient-to-br from-zinc-300 to-zinc-400 text-black" :
-                        i === 2 ? "bg-gradient-to-br from-amber-600 to-amber-700 text-white" :
-                        "bg-zinc-700 text-zinc-300"
-                      )}>
-                        {i + 1}
-                      </span>
-                      <span className="text-sm font-medium truncate group-hover:text-cyan-400 transition-colors flex-1">
-                        {inv.name.split(' ').slice(0, 2).join(' ')}
-                      </span>
-                    </div>
-                    <div className="text-lg font-bold text-white">₹{rupeeCompact(inv.totalValue)}</div>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="text-[10px] text-emerald-400">↑ ₹{rupeeCompact(inv.buyValue)}</span>
-                      <span className="text-[10px] text-rose-400">↓ ₹{rupeeCompact(inv.sellValue)}</span>
-                    </div>
-                    <div className="text-xs text-zinc-500 mt-1">{inv.dealCount} deal{inv.dealCount > 1 ? 's' : ''}</div>
-                  </Link>
-                ))}
-              </div>
-            </div>
+            <InvestorLeaderboard 
+              investors={stats.topInvestors} 
+              loading={loading}
+            />
           )}
         </div>
 
