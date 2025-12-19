@@ -26,6 +26,9 @@ interface DealWithPerformance extends Deal {
   weekLow52: number | null
   volume: string | null
   quoteError?: string
+  weekHigh52Distance?: number
+  weekLow52Distance?: number
+  volumeSpike?: number
 }
 
 interface InvestorStats {
@@ -130,6 +133,25 @@ export async function GET(request: NextRequest) {
       const isBuy = deal.side?.toUpperCase() === 'BUY'
       const isWinner = isBuy ? returnPct > 0 : returnPct < 0
       
+      const weekHigh52 = parseFloat(quote.weekHigh52 || quote['52WeekHigh'] || 0) || null
+      const weekLow52 = parseFloat(quote.weekLow52 || quote['52WeekLow'] || 0) || null
+      
+      // Calculate distance from 52-week high/low for AI predictions
+      const weekHigh52Distance = weekHigh52 && currentPrice > 0
+        ? ((weekHigh52 - currentPrice) / weekHigh52) * 100
+        : undefined
+      
+      const weekLow52Distance = weekLow52 && currentPrice > 0
+        ? ((currentPrice - weekLow52) / weekLow52) * 100
+        : undefined
+      
+      // Calculate volume spike (comparing to average volume if available)
+      const avgVolume = parseFloat(quote.avgVolume || quote.averageVolume || 0)
+      const currentVolume = parseFloat(quote.totalTradedQuantity || quote.volume || 0)
+      const volumeSpike = avgVolume > 0 && currentVolume > 0
+        ? currentVolume / avgVolume
+        : undefined
+      
       return {
         ...deal,
         currentPrice,
@@ -139,9 +161,12 @@ export async function GET(request: NextRequest) {
         isWinner,
         dayHigh: parseFloat(quote.dayHigh || 0) || null,
         dayLow: parseFloat(quote.dayLow || 0) || null,
-        weekHigh52: parseFloat(quote.weekHigh52 || quote['52WeekHigh'] || 0) || null,
-        weekLow52: parseFloat(quote.weekLow52 || quote['52WeekLow'] || 0) || null,
+        weekHigh52,
+        weekLow52,
         volume: quote.totalTradedQuantity || quote.volume || null,
+        weekHigh52Distance,
+        weekLow52Distance,
+        volumeSpike,
       }
     })
     

@@ -56,6 +56,7 @@ export default function CompanyPage() {
   const [loading, setLoading] = useState(true)
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [showChat, setShowChat] = useState(false)
+  const [openChatMaximized, setOpenChatMaximized] = useState(false)
   const [activeTab, setActiveTab] = useState<'announcements' | 'corporate-actions'>('announcements')
   const [expandedSection, setExpandedSection] = useState<string>("announcements")
 
@@ -712,6 +713,10 @@ export default function CompanyPage() {
                   ticker={selectedAnnouncement.ticker}
                   company={selectedAnnouncement.company}
                   impact={selectedAnnouncement.impact}
+                  onFullScreenChat={() => {
+                    setOpenChatMaximized(true)
+                    setShowChat(true)
+                  }}
                 />
 
                 {/* Stock Chart */}
@@ -749,8 +754,12 @@ export default function CompanyPage() {
         <SpeedyPipChat
           announcement={selectedAnnouncement}
           isOpen={showChat}
-          onClose={() => setShowChat(false)}
+          onClose={() => {
+            setShowChat(false)
+            setOpenChatMaximized(false)
+          }}
           companyAnnouncements={announcements}
+          initialMaximized={openChatMaximized}
         />
       )}
     </div>

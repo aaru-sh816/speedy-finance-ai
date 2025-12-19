@@ -114,6 +114,7 @@ export default function AnnouncementsPage() {
   // Chat state
   const [showChat, setShowChat] = useState(false)
   const [selectedForChat, setSelectedForChat] = useState<string[]>([]) // IDs of announcements selected for multi-doc chat
+  const [openChatMaximized, setOpenChatMaximized] = useState(false) // Open chat directly in full-screen mode
   
   // Filter state
   const [filters, setFilters] = useState<FilterState>(getDefaultFilters())
@@ -723,6 +724,10 @@ export default function AnnouncementsPage() {
                   ticker={selected.ticker}
                   company={selected.company}
                   impact={selected.impact}
+                  onFullScreenChat={() => {
+                    setOpenChatMaximized(true)
+                    setShowChat(true)
+                  }}
                 />
 
                 {/* Tags */}
@@ -971,9 +976,11 @@ export default function AnnouncementsPage() {
           onClose={() => {
             setShowChat(false)
             setSelectedForChat([])
+            setOpenChatMaximized(false)
           }}
           companyAnnouncements={companyAnnouncements}
           preSelectedDocIds={selectedForChat}
+          initialMaximized={openChatMaximized}
         />
       )}
 

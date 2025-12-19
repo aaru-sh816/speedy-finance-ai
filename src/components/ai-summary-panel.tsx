@@ -25,6 +25,7 @@ interface AISummaryPanelProps {
   ticker?: string
   company?: string
   impact?: BSEImpact
+  onFullScreenChat?: () => void
 }
 
 type AnalysisStatus = "idle" | "fetching_pdf" | "analyzing" | "complete" | "failed"
@@ -65,6 +66,7 @@ export function AISummaryPanel({
   ticker,
   company,
   impact,
+  onFullScreenChat,
 }: AISummaryPanelProps) {
   const [aiSummary, setAiSummary] = useState<AISummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -393,7 +395,18 @@ export function AISummaryPanel({
                 Based on PDF
               </span>
             )}
-            <span className="text-xs text-zinc-500">What This Means for Investors</span>
+            <span className="text-xs text-zinc-500 hidden sm:inline">What This Means for Investors</span>
+            {onFullScreenChat && (
+              <button
+                onClick={onFullScreenChat}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-500 text-xs text-white font-medium hover:opacity-90 transition-all shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40"
+                title="Open Full-Screen AI Chat"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Full-Screen Chat</span>
+                <span className="sm:hidden">Chat</span>
+              </button>
+            )}
           </div>
         </div>
         {time && (

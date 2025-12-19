@@ -61,6 +61,7 @@ interface SpeedyPipChatProps {
   onClose: () => void
   companyAnnouncements?: BSEAnnouncement[]
   preSelectedDocIds?: string[] // IDs pre-selected from Recent Announcements section
+  initialMaximized?: boolean // Open directly in full-screen mode
 }
 
 const KEYWORD_TAGS: Record<string, { label: string; color: string; bg: string; border: string }> = {
@@ -279,17 +280,10 @@ function generateFollowUps(response: string, asked: string[]): string[] {
   if (questions.length < 2) {
     questions.push("Key risks?", "Summary?")
   }
-  
   return questions.filter(q => !asked.includes(q)).slice(0, 3)
 }
 
-export function SpeedyPipChat({ 
-  announcement: initialAnnouncement, 
-  isOpen, 
-  onClose, 
-  companyAnnouncements = [],
-  preSelectedDocIds = []
-}: SpeedyPipChatProps) {
+export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClose, companyAnnouncements = [], preSelectedDocIds = [], initialMaximized = false }: SpeedyPipChatProps) {
   // State
   const [activeAnnouncement, setActiveAnnouncement] = useState(initialAnnouncement)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -303,11 +297,11 @@ export function SpeedyPipChat({
   const [selectedDocs, setSelectedDocs] = useState<string[]>([])
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [isSpeaking, setIsSpeaking] = useState(false)
-  const [isMaximized, setIsMaximized] = useState(false)
+  const [isMaximized, setIsMaximized] = useState(initialMaximized)
   const [hasHydratedHistory, setHasHydratedHistory] = useState(false)
   
   // PIP State
-  const [isExpanded, setIsExpanded] = useState(false)
+  const [isExpanded, setIsExpanded] = useState(initialMaximized || false)
   const [position, setPosition] = useState({ x: 20, y: 20 })
   const [isDragging, setIsDragging] = useState(false)
   const dragOffset = useRef({ x: 0, y: 0 })

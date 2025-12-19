@@ -14,6 +14,17 @@ import { predictDealSuccess, getPredictionDisplay, type DealFeatures } from "@/l
 
 type InvestorType = "all" | "individual" | "institutional"
 
+interface Deal {
+  currentPrice: number | null
+  weekHigh52: number | null
+  weekLow52: number | null
+  weekHigh52Distance?: number
+  weekLow52Distance?: number
+  volumeSpike?: number
+  side: string
+  dealValue: number
+}
+
 interface Investor {
   name: string
   type: "individual" | "institutional" | "unknown"
@@ -28,6 +39,7 @@ interface Investor {
   winRate: number
   avgReturn: number
   totalPnL: number
+  deals: Deal[]
 }
 
 interface Props {
@@ -187,14 +199,27 @@ export function InvestorLeaderboard({ investors, loading, onRefresh }: Props) {
 
               {/* AI Prediction Badge */}
               {(() => {
-                const prediction = predictDealSuccess({
+                // Use the most recent deal or aggregate deal features
+                const latestDeal = inv.deals && inv.deals.length > 0 
+                  ? inv.deals.find(d => d.weekHigh52Distance !== undefined && d.weekLow52Distance !== undefined) || inv.deals[0]
+                  : null
+                
+                const features: DealFeatures = {
                   investorType: inv.type,
                   investorHistoricalWinRate: inv.winRate,
                   investorAvgReturn: inv.avgReturn,
                   investorTotalDeals: inv.totalDeals,
                   side: inv.buyDeals > inv.sellDeals ? "BUY" : "SELL",
                   dealValue: inv.totalValue,
-                }, inv.name)
+                  // Add real stock features from latest deal if available
+                  ...(latestDeal && {
+                    weekHigh52Distance: latestDeal.weekHigh52Distance,
+                    weekLow52Distance: latestDeal.weekLow52Distance,
+                    volumeSpike: latestDeal.volumeSpike,
+                  })
+                }
+                
+                const prediction = predictDealSuccess(features, inv.name)
                 const display = getPredictionDisplay(prediction)
                 return (
                   <div className={clsx(
