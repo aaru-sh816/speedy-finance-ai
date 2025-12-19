@@ -17,6 +17,7 @@ import { SidebarNav } from "@/components/sidebar-nav"
 import { StockTicker, type TickerStock } from "@/components/stock-ticker"
 import { SearchModal } from "@/components/search-modal"
 import { SpeedyPipChat } from "@/components/speedy-pip-chat"
+import { DigitalClock } from "@/components/digital-clock"
 
 function clsx(...v: (string | false | undefined)[]) {
   return v.filter(Boolean).join(" ")
@@ -86,6 +87,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 type Quote = {
   symbol: string
   price: number | null
+  previousClose?: number | null
   change?: number | null
   changePercent?: number | null
   volume?: number | null
@@ -223,6 +225,7 @@ export default function AnnouncementsPage() {
         setQuote({
           symbol: d.symbol,
           price: d.price,
+          previousClose: d.previousClose,
           change: d.change,
           changePercent: d.changePercent,
           volume: d.volume,
@@ -370,22 +373,19 @@ export default function AnnouncementsPage() {
         />
 
         {/* Header */}
-        <header className="flex-shrink-0 z-30 glass-panel border-b border-white/5">
-          <div className="flex items-center justify-between h-16 px-5">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-4 w-4 text-emerald-400" />
-                <h1 className="text-sm md:text-base font-semibold tracking-tight">News you can trust</h1>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[10px] font-medium">
-                  {filtered.length} filings
-                </span>
-              </div>
-              <p className="text-[11px] text-zinc-500 max-w-xl">
-                Speedy cross-checks BSE announcements, scores impact and generates investor-ready summaries in real time.
-              </p>
+        <header className="flex items-center justify-between gap-4 px-4 py-3 border-b border-white/5 bg-black/20">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4">
+              <h1 className="text-lg font-semibold text-white">Announcements</h1>
+              <DigitalClock />
             </div>
-
             <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-500">{filtered.length} results</span>
+              {activeFiltersCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[10px] font-medium">
+                  {activeFiltersCount} filters
+                </span>
+              )}
               {/* Search Button */}
               <button 
                 onClick={() => setShowSearchModal(true)}
@@ -728,6 +728,12 @@ export default function AnnouncementsPage() {
                     setOpenChatMaximized(true)
                     setShowChat(true)
                   }}
+                  quote={quote ? {
+                    currentPrice: quote.price,
+                    previousClose: quote.previousClose,
+                    change: quote.change,
+                    changePercent: quote.changePercent
+                  } : undefined}
                 />
 
                 {/* Tags */}

@@ -13,6 +13,13 @@ import { getCategoryEmoji, getKeywordEmoji } from "@/lib/ai/summaryFormatter"
 import type { BSEImpact } from "@/lib/bse/types"
 import { RefreshCw, FileText, Sparkles, CheckCircle, XCircle, Loader2, Maximize2 } from "lucide-react"
 
+interface Quote {
+  currentPrice: number | null
+  previousClose?: number | null
+  change?: number | null
+  changePercent?: number | null
+}
+
 interface AISummaryPanelProps {
   headline: string
   summary: string
@@ -26,6 +33,7 @@ interface AISummaryPanelProps {
   company?: string
   impact?: BSEImpact
   onFullScreenChat?: () => void
+  quote?: Quote
 }
 
 type AnalysisStatus = "idle" | "fetching_pdf" | "analyzing" | "complete" | "failed"
@@ -67,6 +75,7 @@ export function AISummaryPanel({
   company,
   impact,
   onFullScreenChat,
+  quote,
 }: AISummaryPanelProps) {
   const [aiSummary, setAiSummary] = useState<AISummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -390,6 +399,13 @@ export function AISummaryPanel({
             <span>News summary</span>
           </h4>
           <div className="flex items-center gap-2">
+            {/* Gap Up Alert */}
+            {quote?.previousClose && quote.currentPrice && quote.currentPrice > quote.previousClose && (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-medium text-emerald-400">
+                <span>↑ Gap Up</span>
+                <span>+{((quote.currentPrice - quote.previousClose) / quote.previousClose * 100).toFixed(1)}%</span>
+              </div>
+            )}
             {pdfUsed && (
               <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 text-[10px] font-medium">
                 Based on PDF
@@ -399,7 +415,7 @@ export function AISummaryPanel({
             {onFullScreenChat && (
               <button
                 onClick={onFullScreenChat}
-                className="inline-flex items-center justify-center p-2 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-500 text-white hover:opacity-90 transition-all shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40"
+                className="inline-flex items-center justify-center p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-400 hover:text-white transition-all"
                 title="Open Full-Screen AI Chat"
               >
                 <Maximize2 className="h-4 w-4" />
