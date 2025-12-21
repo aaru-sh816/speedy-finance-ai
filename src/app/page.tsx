@@ -35,9 +35,6 @@ export default function Home() {
               <Link href="/announcements" className="rounded-full px-5 py-2.5 bg-foreground text-background hover:opacity-90 transition">
                 Open Announcements
               </Link>
-              <Link href="/screener" className="rounded-full px-5 py-2.5 border hover:bg-foreground/5 transition">
-                Open Screener
-              </Link>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">

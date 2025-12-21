@@ -6,19 +6,17 @@ import Link from "next/link"
 import { 
   Search, Filter, Download, Volume2, VolumeX, RefreshCw, TrendingUp, TrendingDown, 
   FileText, Sparkles, X, ExternalLink, ChevronRight, Globe, AlertTriangle, Zap, ZapOff,
-  Calendar, BarChart2, Share2, Bookmark, ChevronDown, MessageSquare, Clock, Bell, Star
+  Calendar, BarChart2, Share2, Bookmark, ChevronDown, MessageSquare, Clock
 } from "lucide-react"
 import type { BSEAnnouncement, BSEImpact } from "@/lib/bse/types"
 import { AISummaryPanel, VerdictBadge } from "@/components/ai-summary-panel"
 import { TradingViewChart } from "@/components/trading-view-chart"
 import { type VerdictType, type AISummary, analyzeAnnouncement, getVerdictColor, getVerdictIcon, shouldExcludeAnnouncement } from "@/lib/ai/verdict"
 import { FilterModal, FilterState, getDefaultFilters } from "@/components/filter-modal"
-import { SidebarNav } from "@/components/sidebar-nav"
 import { StockTicker, type TickerStock } from "@/components/stock-ticker"
 import { SearchModal } from "@/components/search-modal"
 import { SpeedyPipChat } from "@/components/speedy-pip-chat"
 import { DigitalClock } from "@/components/digital-clock"
-import { addToWatchlist, removeFromWatchlist, isInWatchlist } from "@/lib/watchlist"
 
 function clsx(...v: (string | false | undefined)[]) {
   return v.filter(Boolean).join(" ")
@@ -147,9 +145,6 @@ export default function AnnouncementsPage() {
   // Auto-refresh
   const [autoRefresh, setAutoRefresh] = useState(true)
   const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const [lastSync, setLastSync] = useState<Date | null>(null)
-  const [newAnnouncementsCount, setNewAnnouncementsCount] = useState(0)
-  const previousAnnouncementIds = useRef<Set<string>>(new Set())
 
   // Ticker stocks
   const [tickerStocks, setTickerStocks] = useState<TickerStock[]>([])
@@ -177,33 +172,10 @@ export default function AnnouncementsPage() {
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch("/api/bse/announcements?maxPages=5", { 
-        cache: "no-store",
-        headers: {
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache'
-        }
-      })
+      const res = await fetch("/api/bse/announcements?maxPages=5", { cache: "no-store" })
       if (!res.ok) throw new Error("Failed to fetch")
       const data = await res.json()
-      const newAnnouncements = data.announcements || []
-      
-      // Track new announcements for notifications
-      if (previousAnnouncementIds.current.size > 0) {
-        const newIds = newAnnouncements
-          .filter((a: BSEAnnouncement) => !previousAnnouncementIds.current.has(a.id))
-          .map((a: BSEAnnouncement) => a.id)
-        if (newIds.length > 0) {
-          setNewAnnouncementsCount(prev => prev + newIds.length)
-          console.log(`[Announcements] ${newIds.length} new announcements detected`)
-        }
-      }
-      
-      // Update tracking set
-      previousAnnouncementIds.current = new Set(newAnnouncements.map((a: BSEAnnouncement) => a.id))
-      
-      setAnnouncements(newAnnouncements)
-      setLastSync(new Date())
+      setAnnouncements(data.announcements || [])
       // Auto-select first if none selected
       if (!selectedId && data.announcements?.length > 0) {
         setSelectedId(data.announcements[0].id)
@@ -273,20 +245,21 @@ export default function AnnouncementsPage() {
   useEffect(() => {
     if (!selected) return
     const ctrl = new AbortController()
-    
-    // Fetch with cache bypass headers to ensure fresh data
-    fetch(`/api/bse/company/${selected.scripCode}?days=90`, { 
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: {
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-      }
-    })
+    fetch(`/api/bse/company/${selected.scripCode}?days=30`, { signal: ctrl.signal })
       .then((r) => r.json())
       .then((d) => {
-        console.log(`[Announcements] Got ${d.announcements?.length || 0} company announcements for ${selected.scripCode}`)
-        setCompanyAnnouncements(d.announcements || [])
+        let companyAnns = d.announcements || []
+        
+        // If API returned no announcements, use announcements from main list for same company
+        if (companyAnns.length === 0) {
+          companyAnns = announcements.filter(a => 
+            a.scripCode === selected.scripCode || 
+            a.ticker === selected.ticker ||
+            a.company === selected.company
+          )
+        }
+        
+        setCompanyAnnouncements(companyAnns)
         // Store tradingViewSymbol for chart
         setCompanyInfo({
           tradingViewSymbol: d.tradingViewSymbol || null,
@@ -294,13 +267,18 @@ export default function AnnouncementsPage() {
           symbol: d.symbol || selected.ticker,
         })
       })
-      .catch((err) => {
-        console.error('[Announcements] Failed to fetch company announcements:', err)
-        setCompanyAnnouncements([])
+      .catch(() => {
+        // Fallback: filter from main announcements list
+        const fallbackAnns = announcements.filter(a => 
+          a.scripCode === selected.scripCode || 
+          a.ticker === selected.ticker ||
+          a.company === selected.company
+        )
+        setCompanyAnnouncements(fallbackAnns)
         setCompanyInfo(null)
       })
     return () => ctrl.abort()
-  }, [selected?.scripCode, selected?.company, selected?.ticker])
+  }, [selected?.scripCode, selected?.company, selected?.ticker, announcements])
 
   // Get local AI summary & verdict for announcement (with caching)
   const getLocalSummary = useCallback((a: BSEAnnouncement): AISummary => {
@@ -389,11 +367,8 @@ export default function AnnouncementsPage() {
 
   return (
     <div className="h-screen max-h-screen bg-gradient-to-b from-black via-zinc-950 to-black text-white flex overflow-hidden">
-      {/* Sidebar Navigation */}
-      <SidebarNav activeId="announcements" newCount={filtered.filter(a => a.impact === "high").length} />
-
       {/* Main Content Area */}
-      <div className="flex-1 ml-16 flex flex-col h-screen overflow-hidden">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
         {/* Stock Ticker */}
         <StockTicker 
           stocks={tickerStocks}
@@ -413,78 +388,34 @@ export default function AnnouncementsPage() {
           }}
         />
 
-        {/* Header - Mobile Optimized */}
-        <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4 px-4 py-3 border-b border-white/5 bg-black/20">
-          {/* Top Row */}
-          <div className="flex items-center justify-between w-full sm:w-auto gap-2 sm:gap-4">
-            <div className="flex items-center gap-2 sm:gap-4">
-              <h1 className="text-base sm:text-lg font-semibold text-white">Announcements</h1>
+        {/* Header */}
+        <header className="flex items-center justify-between gap-4 px-4 py-3 border-b border-white/5 bg-black/20">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4">
+              <h1 className="text-lg font-semibold text-white">Announcements</h1>
               <DigitalClock />
             </div>
-            {/* Mobile-only quick actions */}
-            <div className="flex sm:hidden items-center gap-1.5">
-              <button onClick={() => setShowSearchModal(true)} className="p-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400">
-                <Search className="h-4 w-4" />
-              </button>
-              <button onClick={() => setShowFilterModal(true)} className="p-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400">
-                <Filter className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-          
-          {/* Status Badges Row */}
-          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0 scrollbar-hide">
-            <span className="text-[10px] sm:text-xs text-zinc-500 whitespace-nowrap">{filtered.length} results</span>
-              
-            {/* Date Range Badge */}
-            <span className="px-1.5 sm:px-2 py-0.5 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-300 text-[9px] sm:text-[10px] font-medium flex items-center gap-1 whitespace-nowrap">
-              <Calendar className="h-2.5 sm:h-3 w-2.5 sm:w-3" />
-              {new Date(filters.fromDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} - {new Date(filters.toDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-            </span>
-              
-            {/* Last Sync Indicator */}
-            {lastSync && (
-              <span className="hidden sm:flex px-2 py-0.5 rounded-lg bg-zinc-800 text-zinc-400 text-[10px] font-medium items-center gap-1 whitespace-nowrap" title={`Last synced: ${lastSync.toLocaleTimeString()}`}>
-                <RefreshCw className="h-3 w-3" />
-                {Math.floor((Date.now() - lastSync.getTime()) / 1000) < 60 
-                  ? 'Just now' 
-                  : `${Math.floor((Date.now() - lastSync.getTime()) / 60000)}m ago`}
-              </span>
-            )}
-              
-            {/* New Announcements Badge */}
-            {newAnnouncementsCount > 0 && (
-              <button 
-                onClick={() => {
-                  setNewAnnouncementsCount(0)
-                  window.scrollTo({ top: 0, behavior: 'smooth' })
-                }}
-                className="px-1.5 sm:px-2 py-0.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[9px] sm:text-[10px] font-medium flex items-center gap-1 animate-pulse whitespace-nowrap"
-              >
-                <Bell className="h-2.5 sm:h-3 w-2.5 sm:w-3" />
-                {newAnnouncementsCount} new
-              </button>
-            )}
-              
-            {activeFiltersCount > 0 && (
-              <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[9px] sm:text-[10px] font-medium whitespace-nowrap">
-                {activeFiltersCount} filters
-              </span>
-            )}
-              {/* Search Button - Desktop only */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-500">{filtered.length} results</span>
+              {activeFiltersCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[10px] font-medium">
+                  {activeFiltersCount} filters
+                </span>
+              )}
+              {/* Search Button */}
               <button 
                 onClick={() => setShowSearchModal(true)}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all text-xs"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all text-xs"
               >
                 <Search className="h-3.5 w-3.5" />
-                <span>Ctrl+K</span>
+                <span className="hidden sm:inline">Ctrl+K</span>
               </button>
 
-              {/* Filter Button - Desktop only */}
+              {/* Filter Button */}
               <button
                 onClick={() => setShowFilterModal(true)}
                 className={clsx(
-                  "hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs",
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs",
                   activeFiltersCount > 0 
                     ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-300" 
                     : "bg-zinc-900/70 border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800"
@@ -544,6 +475,7 @@ export default function AnnouncementsPage() {
                 )}
               </button>
             </div>
+          </div>
         </header>
 
         {/* Main Content - Master-Detail */}

@@ -10,7 +10,6 @@ import {
 } from "lucide-react"
 import clsx from "clsx"
 import type { BSEAnnouncement } from "@/lib/bse/types"
-import { SidebarNav } from "@/components/sidebar-nav"
 import { AISummaryPanel } from "@/components/ai-summary-panel"
 import { SpeedyPipChat } from "@/components/speedy-pip-chat"
 import { TradingViewChart, ChartPlaceholder } from "@/components/trading-view-chart"
@@ -250,8 +249,7 @@ export default function CompanyPage() {
   if (loading) {
     return (
       <div className="h-screen bg-zinc-950 text-white flex">
-        <SidebarNav activeId="documents" />
-        <div className="flex-1 ml-16 flex items-center justify-center">
+        <div className="flex-1 flex items-center justify-center">
           <div className="flex flex-col items-center gap-4">
             <div className="w-12 h-12 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
             <span className="text-zinc-400">Loading company data...</span>
@@ -263,9 +261,7 @@ export default function CompanyPage() {
 
   return (
     <div className="h-screen max-h-screen bg-zinc-950 text-white flex overflow-hidden">
-      <SidebarNav activeId="documents" />
-
-      <div className="flex-1 ml-16 flex flex-col h-screen overflow-hidden">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
         {/* Header */}
         <header className="flex-shrink-0 z-30 glass-panel border-b border-white/5">
           <div className="flex items-center justify-between h-14 px-6">
