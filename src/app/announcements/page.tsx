@@ -134,7 +134,6 @@ export default function AnnouncementsPage() {
   // Quote state
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
-  const [quoteCache, setQuoteCache] = useState<Map<string, Quote>>(new Map())
   
   // Company info for TradingView
   const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null)
@@ -149,59 +148,6 @@ export default function AnnouncementsPage() {
 
   // Ticker stocks
   const [tickerStocks, setTickerStocks] = useState<TickerStock[]>([])
-
-  // Preload quotes for latest announcements
-  const preloadQuotes = useCallback(async (announcements: BSEAnnouncement[]) => {
-    if (announcements.length === 0) return
-    
-    // Get unique scrip codes from latest 10 announcements
-    const uniqueScripCodes = new Set(
-      announcements.slice(0, 10).map(a => a.scripCode)
-    )
-    
-    console.log(`[Quote Preload] Loading quotes for ${uniqueScripCodes.size} companies`)
-    
-    // Fetch all quotes in parallel
-    const quotePromises = Array.from(uniqueScripCodes).map(async (scripCode) => {
-      try {
-        const res = await fetch(`/api/bse/quote?symbol=${encodeURIComponent(scripCode)}`, {
-          next: { revalidate: 300 } // Cache for 5 minutes
-        })
-        if (res.ok) {
-          const data = await res.json()
-          if (data && !data.error) {
-            return [scripCode, {
-              symbol: data.symbol,
-              price: data.price,
-              previousClose: data.previousClose,
-              change: data.change,
-              changePercent: data.changePercent,
-              volume: data.volume,
-              dayHigh: data.dayHigh,
-              dayLow: data.dayLow,
-              marketCap: data.marketCap,
-            }] as [string, Quote]
-          }
-        }
-      } catch (e) {
-        console.error(`[Quote Preload] Error for ${scripCode}:`, e)
-      }
-      return null
-    })
-    
-    const results = await Promise.allSettled(quotePromises)
-    const newCache = new Map<string, Quote>()
-    
-    results.forEach((result) => {
-      if (result.status === 'fulfilled' && result.value) {
-        const [scripCode, quoteData] = result.value
-        newCache.set(scripCode, quoteData)
-      }
-    })
-    
-    console.log(`[Quote Preload] Cached ${newCache.size} quotes`)
-    setQuoteCache(newCache)
-  }, [])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -221,52 +167,112 @@ export default function AnnouncementsPage() {
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [])
 
-  // Fetch announcements
-  const fetchAnnouncements = useCallback(async () => {
+  // Quote cache for pre-loaded quotes
+  const [quoteCache, setQuoteCache] = useState<Map<string, Quote>>(new Map())
+
+  // Fetch announcements with retry logic
+  const fetchAnnouncements = useCallback(async (retryCount = 0) => {
+    const maxRetries = 3
+    
     try {
       setLoading(true)
       setError(null)
       
-      // Build query params with date range from filters
-      const params = new URLSearchParams({
-        maxPages: '15', // Increased from 5 to fetch more results
+      const res = await fetch("/api/bse/announcements?maxPages=20", { 
+        cache: "no-store",
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
       })
       
-      // Add date range if filters are set
-      if (filters.fromDate) {
-        params.append('fromDate', filters.fromDate)
-      }
-      if (filters.toDate) {
-        params.append('toDate', filters.toDate)
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`)
       }
       
-      const res = await fetch(`/api/bse/announcements?${params.toString()}`, { cache: "no-store" })
-      if (!res.ok) throw new Error("Failed to fetch")
       const data = await res.json()
-      console.log(`[Fetch] Got ${data.announcements?.length || 0} announcements`)
+      
+      if (!data.announcements || data.announcements.length === 0) {
+        console.warn("No announcements returned from API")
+      }
+      
       setAnnouncements(data.announcements || [])
+      
       // Auto-select first if none selected
       if (!selectedId && data.announcements?.length > 0) {
         setSelectedId(data.announcements[0].id)
       }
+      
+      // Pre-load quotes for latest 10 announcements
+      if (data.announcements?.length > 0) {
+        preloadQuotes(data.announcements.slice(0, 10))
+      }
+      
+      setError(null)
     } catch (e: any) {
-      setError(e.message || "Failed to load announcements")
+      console.error(`Failed to fetch announcements (attempt ${retryCount + 1}):`, e)
+      
+      if (retryCount < maxRetries) {
+        // Exponential backoff: 1s, 2s, 4s
+        const delay = Math.pow(2, retryCount) * 1000
+        await new Promise(resolve => setTimeout(resolve, delay))
+        return fetchAnnouncements(retryCount + 1)
+      }
+      
+      setError(e.message || "Failed to load announcements. Please try again.")
     } finally {
       setLoading(false)
     }
-  }, [selectedId, filters.fromDate, filters.toDate])
+  }, [selectedId])
+
+  // Pre-load quotes for multiple announcements in parallel
+  const preloadQuotes = useCallback(async (announcements: BSEAnnouncement[]) => {
+    const uniqueScripCodes = Array.from(new Set(announcements.map(a => a.scripCode)))
+    
+    const quotePromises = uniqueScripCodes.map(async (scripCode) => {
+      try {
+        const res = await fetch(`/api/bse/quote?symbol=${encodeURIComponent(scripCode)}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (!data.error && data.price != null) {
+            return {
+              scripCode,
+              quote: {
+                symbol: data.symbol,
+                price: data.price,
+                previousClose: data.previousClose,
+                change: data.change,
+                changePercent: data.changePercent,
+                volume: data.volume,
+                dayHigh: data.dayHigh,
+                dayLow: data.dayLow,
+                marketCap: data.marketCap,
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`Failed to preload quote for ${scripCode}:`, e)
+      }
+      return null
+    })
+    
+    const results = await Promise.all(quotePromises)
+    const newCache = new Map(quoteCache)
+    
+    results.forEach(result => {
+      if (result) {
+        newCache.set(result.scripCode, result.quote)
+      }
+    })
+    
+    setQuoteCache(newCache)
+  }, [quoteCache])
 
   // Initial fetch
   useEffect(() => {
     fetchAnnouncements()
   }, [])
-
-  // Preload quotes when announcements change
-  useEffect(() => {
-    if (announcements.length > 0) {
-      preloadQuotes(announcements)
-    }
-  }, [announcements, preloadQuotes])
 
   // Auto-refresh - Real-time updates every 30 seconds
   useEffect(() => {
@@ -288,20 +294,18 @@ export default function AnnouncementsPage() {
     return fromCompany || null
   }, [announcements, companyAnnouncements, selectedId])
 
-  // Fetch quote when selection changes
+  // Fetch quote when selection changes - check cache first
   useEffect(() => {
     if (!selected) return
     
-    // Check cache first for instant display
+    // Check if quote is already in cache
     const cachedQuote = quoteCache.get(selected.scripCode)
     if (cachedQuote) {
-      console.log(`[Quote] Using cached quote for ${selected.scripCode}`)
       setQuote(cachedQuote)
       setQuoteLoading(false)
       return
     }
     
-    // Fetch if not in cache
     const ctrl = new AbortController()
     setQuoteLoading(true)
     fetch(`/api/bse/quote?symbol=${encodeURIComponent(selected.scripCode)}`, { signal: ctrl.signal })
@@ -311,7 +315,7 @@ export default function AnnouncementsPage() {
           setQuote(null)
           return
         }
-        const quoteData = {
+        const newQuote = {
           symbol: d.symbol,
           price: d.price,
           previousClose: d.previousClose,
@@ -322,35 +326,40 @@ export default function AnnouncementsPage() {
           dayLow: d.dayLow,
           marketCap: d.marketCap,
         }
-        setQuote(quoteData)
-        // Update cache
-        setQuoteCache(prev => new Map(prev).set(selected.scripCode, quoteData))
+        setQuote(newQuote)
+        // Add to cache
+        setQuoteCache(prev => new Map(prev).set(selected.scripCode, newQuote))
       })
       .catch(() => setQuote(null))
       .finally(() => setQuoteLoading(false))
     return () => ctrl.abort()
   }, [selected?.scripCode, quoteCache])
 
-  // Fetch company announcements and info when selection changes
+  // Fetch company announcements and info when selection changes with retry logic
   useEffect(() => {
     if (!selected) return
-    const ctrl = new AbortController()
     
-    // Fetch with no-cache to ensure fresh data
-    fetch(`/api/bse/company/${selected.scripCode}?days=30`, { 
-      signal: ctrl.signal,
-      cache: 'no-store',
-      headers: {
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-      }
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
-        return r.json()
-      })
-      .then((d) => {
-        console.log(`[Recent Announcements] Got ${d.announcements?.length || 0} announcements for ${selected.scripCode}`)
+    const ctrl = new AbortController()
+    let retryCount = 0
+    const maxRetries = 3
+    
+    const fetchWithRetry = async () => {
+      try {
+        const res = await fetch(`/api/bse/company/${selected.scripCode}?days=30`, { 
+          signal: ctrl.signal,
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          }
+        })
+        
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`)
+        }
+        
+        const d = await res.json()
+        
         setCompanyAnnouncements(d.announcements || [])
         // Store tradingViewSymbol for chart
         setCompanyInfo({
@@ -358,26 +367,25 @@ export default function AnnouncementsPage() {
           companyName: d.companyName || selected.company,
           symbol: d.symbol || selected.ticker,
         })
-      })
-      .catch((e) => {
-        console.error('[Recent Announcements] Error:', e)
-        // Fallback: try announcements API directly
-        fetch(`/api/bse/announcements?scripCode=${selected.scripCode}&days=30`, {
-          signal: ctrl.signal,
-          cache: 'no-store'
-        })
-          .then(r => r.json())
-          .then(data => {
-            if (data.announcements?.length > 0) {
-              console.log(`[Recent Announcements] Fallback: Got ${data.announcements.length} announcements`)
-              setCompanyAnnouncements(data.announcements)
-            } else {
-              setCompanyAnnouncements([])
-            }
-          })
-          .catch(() => setCompanyAnnouncements([]))
+      } catch (e) {
+        console.error(`Failed to fetch company announcements (attempt ${retryCount + 1}):`, e)
+        
+        if (retryCount < maxRetries && !ctrl.signal.aborted) {
+          retryCount++
+          // Exponential backoff: 1s, 2s, 4s
+          const delay = Math.pow(2, retryCount - 1) * 1000
+          await new Promise(resolve => setTimeout(resolve, delay))
+          return fetchWithRetry()
+        }
+        
+        // Final failure - set empty state
+        setCompanyAnnouncements([])
         setCompanyInfo(null)
-      })
+      }
+    }
+    
+    fetchWithRetry()
+    
     return () => ctrl.abort()
   }, [selected?.scripCode, selected?.company, selected?.ticker])
 
@@ -532,7 +540,7 @@ export default function AnnouncementsPage() {
 
               {/* Refresh Button */}
               <button 
-                onClick={fetchAnnouncements} 
+                onClick={() => fetchAnnouncements()} 
                 className="p-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all"
               >
                 <RefreshCw className={clsx("h-3.5 w-3.5", loading && "animate-spin")} />
@@ -595,7 +603,7 @@ export default function AnnouncementsPage() {
                 <div className="p-8 text-center">
                   <AlertTriangle className="h-10 w-10 text-rose-500 mx-auto mb-3" />
                   <p className="text-sm text-rose-400">{error}</p>
-                  <button onClick={fetchAnnouncements} className="mt-3 text-sm text-cyan-400 hover:underline">
+                  <button onClick={() => fetchAnnouncements()} className="mt-3 text-sm text-cyan-400 hover:underline">
                     Retry
                   </button>
                 </div>
