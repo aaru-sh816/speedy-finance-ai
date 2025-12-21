@@ -13,7 +13,6 @@ import { AISummaryPanel, VerdictBadge } from "@/components/ai-summary-panel"
 import { TradingViewChart } from "@/components/trading-view-chart"
 import { type VerdictType, type AISummary, analyzeAnnouncement, getVerdictColor, getVerdictIcon, shouldExcludeAnnouncement } from "@/lib/ai/verdict"
 import { FilterModal, FilterState, getDefaultFilters } from "@/components/filter-modal"
-import { SidebarNav } from "@/components/sidebar-nav"
 import { StockTicker, type TickerStock } from "@/components/stock-ticker"
 import { SearchModal } from "@/components/search-modal"
 import { SpeedyPipChat } from "@/components/speedy-pip-chat"
@@ -135,6 +134,7 @@ export default function AnnouncementsPage() {
   // Quote state
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
+  const [quoteCache, setQuoteCache] = useState<Map<string, Quote>>(new Map())
   
   // Company info for TradingView
   const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null)
@@ -149,6 +149,59 @@ export default function AnnouncementsPage() {
 
   // Ticker stocks
   const [tickerStocks, setTickerStocks] = useState<TickerStock[]>([])
+
+  // Preload quotes for latest announcements
+  const preloadQuotes = useCallback(async (announcements: BSEAnnouncement[]) => {
+    if (announcements.length === 0) return
+    
+    // Get unique scrip codes from latest 10 announcements
+    const uniqueScripCodes = new Set(
+      announcements.slice(0, 10).map(a => a.scripCode)
+    )
+    
+    console.log(`[Quote Preload] Loading quotes for ${uniqueScripCodes.size} companies`)
+    
+    // Fetch all quotes in parallel
+    const quotePromises = Array.from(uniqueScripCodes).map(async (scripCode) => {
+      try {
+        const res = await fetch(`/api/bse/quote?symbol=${encodeURIComponent(scripCode)}`, {
+          next: { revalidate: 300 } // Cache for 5 minutes
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data && !data.error) {
+            return [scripCode, {
+              symbol: data.symbol,
+              price: data.price,
+              previousClose: data.previousClose,
+              change: data.change,
+              changePercent: data.changePercent,
+              volume: data.volume,
+              dayHigh: data.dayHigh,
+              dayLow: data.dayLow,
+              marketCap: data.marketCap,
+            }] as [string, Quote]
+          }
+        }
+      } catch (e) {
+        console.error(`[Quote Preload] Error for ${scripCode}:`, e)
+      }
+      return null
+    })
+    
+    const results = await Promise.allSettled(quotePromises)
+    const newCache = new Map<string, Quote>()
+    
+    results.forEach((result) => {
+      if (result.status === 'fulfilled' && result.value) {
+        const [scripCode, quoteData] = result.value
+        newCache.set(scripCode, quoteData)
+      }
+    })
+    
+    console.log(`[Quote Preload] Cached ${newCache.size} quotes`)
+    setQuoteCache(newCache)
+  }, [])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -173,9 +226,24 @@ export default function AnnouncementsPage() {
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch("/api/bse/announcements?maxPages=5", { cache: "no-store" })
+      
+      // Build query params with date range from filters
+      const params = new URLSearchParams({
+        maxPages: '15', // Increased from 5 to fetch more results
+      })
+      
+      // Add date range if filters are set
+      if (filters.fromDate) {
+        params.append('fromDate', filters.fromDate)
+      }
+      if (filters.toDate) {
+        params.append('toDate', filters.toDate)
+      }
+      
+      const res = await fetch(`/api/bse/announcements?${params.toString()}`, { cache: "no-store" })
       if (!res.ok) throw new Error("Failed to fetch")
       const data = await res.json()
+      console.log(`[Fetch] Got ${data.announcements?.length || 0} announcements`)
       setAnnouncements(data.announcements || [])
       // Auto-select first if none selected
       if (!selectedId && data.announcements?.length > 0) {
@@ -186,12 +254,19 @@ export default function AnnouncementsPage() {
     } finally {
       setLoading(false)
     }
-  }, [selectedId])
+  }, [selectedId, filters.fromDate, filters.toDate])
 
   // Initial fetch
   useEffect(() => {
     fetchAnnouncements()
   }, [])
+
+  // Preload quotes when announcements change
+  useEffect(() => {
+    if (announcements.length > 0) {
+      preloadQuotes(announcements)
+    }
+  }, [announcements, preloadQuotes])
 
   // Auto-refresh - Real-time updates every 30 seconds
   useEffect(() => {
@@ -216,6 +291,17 @@ export default function AnnouncementsPage() {
   // Fetch quote when selection changes
   useEffect(() => {
     if (!selected) return
+    
+    // Check cache first for instant display
+    const cachedQuote = quoteCache.get(selected.scripCode)
+    if (cachedQuote) {
+      console.log(`[Quote] Using cached quote for ${selected.scripCode}`)
+      setQuote(cachedQuote)
+      setQuoteLoading(false)
+      return
+    }
+    
+    // Fetch if not in cache
     const ctrl = new AbortController()
     setQuoteLoading(true)
     fetch(`/api/bse/quote?symbol=${encodeURIComponent(selected.scripCode)}`, { signal: ctrl.signal })
@@ -225,7 +311,7 @@ export default function AnnouncementsPage() {
           setQuote(null)
           return
         }
-        setQuote({
+        const quoteData = {
           symbol: d.symbol,
           price: d.price,
           previousClose: d.previousClose,
@@ -235,20 +321,36 @@ export default function AnnouncementsPage() {
           dayHigh: d.dayHigh,
           dayLow: d.dayLow,
           marketCap: d.marketCap,
-        })
+        }
+        setQuote(quoteData)
+        // Update cache
+        setQuoteCache(prev => new Map(prev).set(selected.scripCode, quoteData))
       })
       .catch(() => setQuote(null))
       .finally(() => setQuoteLoading(false))
     return () => ctrl.abort()
-  }, [selected?.scripCode])
+  }, [selected?.scripCode, quoteCache])
 
   // Fetch company announcements and info when selection changes
   useEffect(() => {
     if (!selected) return
     const ctrl = new AbortController()
-    fetch(`/api/bse/company/${selected.scripCode}?days=30`, { signal: ctrl.signal })
-      .then((r) => r.json())
+    
+    // Fetch with no-cache to ensure fresh data
+    fetch(`/api/bse/company/${selected.scripCode}?days=30`, { 
+      signal: ctrl.signal,
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then((d) => {
+        console.log(`[Recent Announcements] Got ${d.announcements?.length || 0} announcements for ${selected.scripCode}`)
         setCompanyAnnouncements(d.announcements || [])
         // Store tradingViewSymbol for chart
         setCompanyInfo({
@@ -257,8 +359,23 @@ export default function AnnouncementsPage() {
           symbol: d.symbol || selected.ticker,
         })
       })
-      .catch(() => {
-        setCompanyAnnouncements([])
+      .catch((e) => {
+        console.error('[Recent Announcements] Error:', e)
+        // Fallback: try announcements API directly
+        fetch(`/api/bse/announcements?scripCode=${selected.scripCode}&days=30`, {
+          signal: ctrl.signal,
+          cache: 'no-store'
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.announcements?.length > 0) {
+              console.log(`[Recent Announcements] Fallback: Got ${data.announcements.length} announcements`)
+              setCompanyAnnouncements(data.announcements)
+            } else {
+              setCompanyAnnouncements([])
+            }
+          })
+          .catch(() => setCompanyAnnouncements([]))
         setCompanyInfo(null)
       })
     return () => ctrl.abort()
@@ -351,11 +468,8 @@ export default function AnnouncementsPage() {
 
   return (
     <div className="h-screen max-h-screen bg-gradient-to-b from-black via-zinc-950 to-black text-white flex overflow-hidden">
-      {/* Sidebar Navigation */}
-      <SidebarNav activeId="announcements" newCount={filtered.filter(a => a.impact === "high").length} />
-
       {/* Main Content Area */}
-      <div className="flex-1 ml-16 flex flex-col h-screen overflow-hidden">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
         {/* Stock Ticker */}
         <StockTicker 
           stocks={tickerStocks}
@@ -468,7 +582,7 @@ export default function AnnouncementsPage() {
         {/* Main Content - Master-Detail */}
         <div className="flex-1 flex overflow-hidden min-h-0">
           {/* Left Panel - Announcements List */}
-          <aside className="hidden md:flex md:w-[320px] md:min-w-[280px] md:max-w-[360px] glass-sidebar flex-col">
+          <aside className="flex w-[320px] min-w-[280px] max-w-[360px] glass-sidebar flex-col">
             {/* List */}
             <div className="flex-1 overflow-y-auto scrollbar-thin">
               {loading && announcements.length === 0 && (
