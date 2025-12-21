@@ -6,7 +6,7 @@ import Link from "next/link"
 import { 
   Search, Filter, Download, Volume2, VolumeX, RefreshCw, TrendingUp, TrendingDown, 
   FileText, Sparkles, X, ExternalLink, ChevronRight, Globe, AlertTriangle, Zap, ZapOff,
-  Calendar, BarChart2, Share2, Bookmark, ChevronDown, MessageSquare, Clock
+  Calendar, BarChart2, Share2, Bookmark, ChevronDown, MessageSquare, Clock, Bell, Star
 } from "lucide-react"
 import type { BSEAnnouncement, BSEImpact } from "@/lib/bse/types"
 import { AISummaryPanel, VerdictBadge } from "@/components/ai-summary-panel"
@@ -18,6 +18,7 @@ import { StockTicker, type TickerStock } from "@/components/stock-ticker"
 import { SearchModal } from "@/components/search-modal"
 import { SpeedyPipChat } from "@/components/speedy-pip-chat"
 import { DigitalClock } from "@/components/digital-clock"
+import { addToWatchlist, removeFromWatchlist, isInWatchlist } from "@/lib/watchlist"
 
 function clsx(...v: (string | false | undefined)[]) {
   return v.filter(Boolean).join(" ")
@@ -146,6 +147,9 @@ export default function AnnouncementsPage() {
   // Auto-refresh
   const [autoRefresh, setAutoRefresh] = useState(true)
   const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const [lastSync, setLastSync] = useState<Date | null>(null)
+  const [newAnnouncementsCount, setNewAnnouncementsCount] = useState(0)
+  const previousAnnouncementIds = useRef<Set<string>>(new Set())
 
   // Ticker stocks
   const [tickerStocks, setTickerStocks] = useState<TickerStock[]>([])
@@ -173,10 +177,33 @@ export default function AnnouncementsPage() {
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch("/api/bse/announcements?maxPages=5", { cache: "no-store" })
+      const res = await fetch("/api/bse/announcements?maxPages=5", { 
+        cache: "no-store",
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      })
       if (!res.ok) throw new Error("Failed to fetch")
       const data = await res.json()
-      setAnnouncements(data.announcements || [])
+      const newAnnouncements = data.announcements || []
+      
+      // Track new announcements for notifications
+      if (previousAnnouncementIds.current.size > 0) {
+        const newIds = newAnnouncements
+          .filter((a: BSEAnnouncement) => !previousAnnouncementIds.current.has(a.id))
+          .map((a: BSEAnnouncement) => a.id)
+        if (newIds.length > 0) {
+          setNewAnnouncementsCount(prev => prev + newIds.length)
+          console.log(`[Announcements] ${newIds.length} new announcements detected`)
+        }
+      }
+      
+      // Update tracking set
+      previousAnnouncementIds.current = new Set(newAnnouncements.map((a: BSEAnnouncement) => a.id))
+      
+      setAnnouncements(newAnnouncements)
+      setLastSync(new Date())
       // Auto-select first if none selected
       if (!selectedId && data.announcements?.length > 0) {
         setSelectedId(data.announcements[0].id)
@@ -247,42 +274,19 @@ export default function AnnouncementsPage() {
     if (!selected) return
     const ctrl = new AbortController()
     
-    // Try company-specific API first
-    fetch(`/api/bse/company/${selected.scripCode}?days=30`, { 
+    // Fetch with cache bypass headers to ensure fresh data
+    fetch(`/api/bse/company/${selected.scripCode}?days=90`, { 
       signal: ctrl.signal,
-      cache: 'no-store'
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      }
     })
       .then((r) => r.json())
-      .then(async (d) => {
-        console.log(`[Company Announcements] Got ${d.announcements?.length || 0} announcements for ${selected.scripCode}`)
-        
-        // If company API returns announcements, use them
-        if (d.announcements && d.announcements.length > 0) {
-          setCompanyAnnouncements(d.announcements)
-        } else {
-          // Fallback: Filter from main announcements list
-          console.log(`[Company Announcements] No data from company API, filtering from main list`)
-          const filtered = announcements.filter(a => a.scripCode === selected.scripCode)
-          setCompanyAnnouncements(filtered)
-          
-          // If still no results, try direct announcements API
-          if (filtered.length === 0) {
-            try {
-              const annRes = await fetch(`/api/bse/announcements?scripCode=${selected.scripCode}&days=30`, {
-                signal: ctrl.signal,
-                cache: 'no-store'
-              })
-              const annData = await annRes.json()
-              if (annData.announcements?.length > 0) {
-                console.log(`[Company Announcements] Got ${annData.announcements.length} from announcements API`)
-                setCompanyAnnouncements(annData.announcements)
-              }
-            } catch (e) {
-              console.error('[Company Announcements] Fallback failed:', e)
-            }
-          }
-        }
-        
+      .then((d) => {
+        console.log(`[Announcements] Got ${d.announcements?.length || 0} company announcements for ${selected.scripCode}`)
+        setCompanyAnnouncements(d.announcements || [])
         // Store tradingViewSymbol for chart
         setCompanyInfo({
           tradingViewSymbol: d.tradingViewSymbol || null,
@@ -290,15 +294,13 @@ export default function AnnouncementsPage() {
           symbol: d.symbol || selected.ticker,
         })
       })
-      .catch((e) => {
-        console.error('[Company Announcements] Error:', e)
-        // On error, try filtering from main announcements
-        const filtered = announcements.filter(a => a.scripCode === selected.scripCode)
-        setCompanyAnnouncements(filtered)
+      .catch((err) => {
+        console.error('[Announcements] Failed to fetch company announcements:', err)
+        setCompanyAnnouncements([])
         setCompanyInfo(null)
       })
     return () => ctrl.abort()
-  }, [selected?.scripCode, selected?.company, selected?.ticker, announcements])
+  }, [selected?.scripCode, selected?.company, selected?.ticker])
 
   // Get local AI summary & verdict for announcement (with caching)
   const getLocalSummary = useCallback((a: BSEAnnouncement): AISummary => {
@@ -320,22 +322,14 @@ export default function AnnouncementsPage() {
   // Filter announcements
   const filtered = useMemo(() => {
     return announcements.filter((a) => {
-      // Date range filter - handle timezone correctly
+      // Date range filter
       const announcementDate = new Date(a.time)
-      
-      // Create date objects and normalize to start/end of day in local timezone
       const fromDate = new Date(filters.fromDate)
       fromDate.setHours(0, 0, 0, 0)
-      
       const toDate = new Date(filters.toDate)
       toDate.setHours(23, 59, 59, 999)
       
-      // Compare timestamps
-      const annTime = announcementDate.getTime()
-      const fromTime = fromDate.getTime()
-      const toTime = toDate.getTime()
-      
-      if (annTime < fromTime || annTime > toTime) return false
+      if (announcementDate < fromDate || announcementDate > toDate) return false
       
       // Noise exclusion filter
       if (excludeNoise && shouldExcludeAnnouncement(`${a.headline} ${a.summary}`)) return false
@@ -426,19 +420,43 @@ export default function AnnouncementsPage() {
               <h1 className="text-lg font-semibold text-white">Announcements</h1>
               <DigitalClock />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs text-zinc-500">{filtered.length} results</span>
+              
+              {/* Date Range Badge */}
+              <span className="px-2 py-0.5 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-300 text-[10px] font-medium flex items-center gap-1">
+                <Calendar className="h-3 w-3" />
+                {new Date(filters.fromDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} - {new Date(filters.toDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+              </span>
+              
+              {/* Last Sync Indicator */}
+              {lastSync && (
+                <span className="px-2 py-0.5 rounded-lg bg-zinc-800 text-zinc-400 text-[10px] font-medium flex items-center gap-1" title={`Last synced: ${lastSync.toLocaleTimeString()}`}>
+                  <RefreshCw className="h-3 w-3" />
+                  {Math.floor((Date.now() - lastSync.getTime()) / 1000) < 60 
+                    ? 'Just now' 
+                    : `${Math.floor((Date.now() - lastSync.getTime()) / 60000)}m ago`}
+                </span>
+              )}
+              
+              {/* New Announcements Badge */}
+              {newAnnouncementsCount > 0 && (
+                <button 
+                  onClick={() => {
+                    setNewAnnouncementsCount(0)
+                    window.scrollTo({ top: 0, behavior: 'smooth' })
+                  }}
+                  className="px-2 py-0.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-medium flex items-center gap-1 animate-pulse"
+                >
+                  <Bell className="h-3 w-3" />
+                  {newAnnouncementsCount} new
+                </button>
+              )}
+              
               {activeFiltersCount > 0 && (
-                <div className="flex items-center gap-1">
-                  <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[10px] font-medium">
-                    {activeFiltersCount} active {activeFiltersCount === 1 ? 'filter' : 'filters'}
-                  </span>
-                  {(filters.fromDate !== getDefaultFilters().fromDate || filters.toDate !== getDefaultFilters().toDate) && (
-                    <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 text-[10px] font-medium">
-                      {new Date(filters.fromDate).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })} - {new Date(filters.toDate).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
-                    </span>
-                  )}
-                </div>
+                <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[10px] font-medium">
+                  {activeFiltersCount} filters
+                </span>
               )}
               {/* Search Button */}
               <button 
@@ -902,13 +920,7 @@ export default function AnnouncementsPage() {
                       </div>
                     ))}
                     {companyAnnouncements.length === 0 && (
-                      <div className="flex flex-col items-center justify-center py-8 px-4">
-                        <FileText className="h-10 w-10 text-zinc-600 mb-3 opacity-50" />
-                        <p className="text-sm text-zinc-400 font-medium mb-1">No Recent Announcements</p>
-                        <p className="text-xs text-zinc-600 text-center max-w-[200px]">
-                          {selected?.company ? `No announcements found for ${selected.company} in the last 30 days` : 'Select an announcement to view company history'}
-                        </p>
-                      </div>
+                      <div className="text-xs text-zinc-500 text-center py-4">No recent announcements</div>
                     )}
                   </div>
                 </details>
