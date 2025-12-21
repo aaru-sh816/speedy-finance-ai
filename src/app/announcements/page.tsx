@@ -413,65 +413,78 @@ export default function AnnouncementsPage() {
           }}
         />
 
-        {/* Header */}
-        <header className="flex items-center justify-between gap-4 px-4 py-3 border-b border-white/5 bg-black/20">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-4">
-              <h1 className="text-lg font-semibold text-white">Announcements</h1>
+        {/* Header - Mobile Optimized */}
+        <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4 px-4 py-3 border-b border-white/5 bg-black/20">
+          {/* Top Row */}
+          <div className="flex items-center justify-between w-full sm:w-auto gap-2 sm:gap-4">
+            <div className="flex items-center gap-2 sm:gap-4">
+              <h1 className="text-base sm:text-lg font-semibold text-white">Announcements</h1>
               <DigitalClock />
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs text-zinc-500">{filtered.length} results</span>
+            {/* Mobile-only quick actions */}
+            <div className="flex sm:hidden items-center gap-1.5">
+              <button onClick={() => setShowSearchModal(true)} className="p-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400">
+                <Search className="h-4 w-4" />
+              </button>
+              <button onClick={() => setShowFilterModal(true)} className="p-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400">
+                <Filter className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+          
+          {/* Status Badges Row */}
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0 scrollbar-hide">
+            <span className="text-[10px] sm:text-xs text-zinc-500 whitespace-nowrap">{filtered.length} results</span>
               
-              {/* Date Range Badge */}
-              <span className="px-2 py-0.5 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-300 text-[10px] font-medium flex items-center gap-1">
-                <Calendar className="h-3 w-3" />
-                {new Date(filters.fromDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} - {new Date(filters.toDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+            {/* Date Range Badge */}
+            <span className="px-1.5 sm:px-2 py-0.5 rounded-lg bg-purple-500/15 border border-purple-500/30 text-purple-300 text-[9px] sm:text-[10px] font-medium flex items-center gap-1 whitespace-nowrap">
+              <Calendar className="h-2.5 sm:h-3 w-2.5 sm:w-3" />
+              {new Date(filters.fromDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })} - {new Date(filters.toDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+            </span>
+              
+            {/* Last Sync Indicator */}
+            {lastSync && (
+              <span className="hidden sm:flex px-2 py-0.5 rounded-lg bg-zinc-800 text-zinc-400 text-[10px] font-medium items-center gap-1 whitespace-nowrap" title={`Last synced: ${lastSync.toLocaleTimeString()}`}>
+                <RefreshCw className="h-3 w-3" />
+                {Math.floor((Date.now() - lastSync.getTime()) / 1000) < 60 
+                  ? 'Just now' 
+                  : `${Math.floor((Date.now() - lastSync.getTime()) / 60000)}m ago`}
               </span>
+            )}
               
-              {/* Last Sync Indicator */}
-              {lastSync && (
-                <span className="px-2 py-0.5 rounded-lg bg-zinc-800 text-zinc-400 text-[10px] font-medium flex items-center gap-1" title={`Last synced: ${lastSync.toLocaleTimeString()}`}>
-                  <RefreshCw className="h-3 w-3" />
-                  {Math.floor((Date.now() - lastSync.getTime()) / 1000) < 60 
-                    ? 'Just now' 
-                    : `${Math.floor((Date.now() - lastSync.getTime()) / 60000)}m ago`}
-                </span>
-              )}
+            {/* New Announcements Badge */}
+            {newAnnouncementsCount > 0 && (
+              <button 
+                onClick={() => {
+                  setNewAnnouncementsCount(0)
+                  window.scrollTo({ top: 0, behavior: 'smooth' })
+                }}
+                className="px-1.5 sm:px-2 py-0.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[9px] sm:text-[10px] font-medium flex items-center gap-1 animate-pulse whitespace-nowrap"
+              >
+                <Bell className="h-2.5 sm:h-3 w-2.5 sm:w-3" />
+                {newAnnouncementsCount} new
+              </button>
+            )}
               
-              {/* New Announcements Badge */}
-              {newAnnouncementsCount > 0 && (
-                <button 
-                  onClick={() => {
-                    setNewAnnouncementsCount(0)
-                    window.scrollTo({ top: 0, behavior: 'smooth' })
-                  }}
-                  className="px-2 py-0.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-[10px] font-medium flex items-center gap-1 animate-pulse"
-                >
-                  <Bell className="h-3 w-3" />
-                  {newAnnouncementsCount} new
-                </button>
-              )}
-              
-              {activeFiltersCount > 0 && (
-                <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[10px] font-medium">
-                  {activeFiltersCount} filters
-                </span>
-              )}
-              {/* Search Button */}
+            {activeFiltersCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[9px] sm:text-[10px] font-medium whitespace-nowrap">
+                {activeFiltersCount} filters
+              </span>
+            )}
+              {/* Search Button - Desktop only */}
               <button 
                 onClick={() => setShowSearchModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all text-xs"
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all text-xs"
               >
                 <Search className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Ctrl+K</span>
+                <span>Ctrl+K</span>
               </button>
 
-              {/* Filter Button */}
+              {/* Filter Button - Desktop only */}
               <button
                 onClick={() => setShowFilterModal(true)}
                 className={clsx(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs",
+                  "hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs",
                   activeFiltersCount > 0 
                     ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-300" 
                     : "bg-zinc-900/70 border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800"
@@ -531,7 +544,6 @@ export default function AnnouncementsPage() {
                 )}
               </button>
             </div>
-          </div>
         </header>
 
         {/* Main Content - Master-Detail */}
