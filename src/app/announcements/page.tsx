@@ -13,6 +13,7 @@ import { AISummaryPanel, VerdictBadge } from "@/components/ai-summary-panel"
 import { TradingViewChart } from "@/components/trading-view-chart"
 import { type VerdictType, type AISummary, analyzeAnnouncement, getVerdictColor, getVerdictIcon, shouldExcludeAnnouncement } from "@/lib/ai/verdict"
 import { FilterModal, FilterState, getDefaultFilters } from "@/components/filter-modal"
+import { SidebarNav } from "@/components/sidebar-nav"
 import { StockTicker, type TickerStock } from "@/components/stock-ticker"
 import { SearchModal } from "@/components/search-modal"
 import { SpeedyPipChat } from "@/components/speedy-pip-chat"
@@ -167,107 +168,25 @@ export default function AnnouncementsPage() {
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [])
 
-  // Quote cache for pre-loaded quotes
-  const [quoteCache, setQuoteCache] = useState<Map<string, Quote>>(new Map())
-
-  // Fetch announcements with retry logic
-  const fetchAnnouncements = useCallback(async (retryCount = 0) => {
-    const maxRetries = 3
-    
+  // Fetch announcements
+  const fetchAnnouncements = useCallback(async () => {
     try {
       setLoading(true)
       setError(null)
-      
-      const res = await fetch("/api/bse/announcements?maxPages=20", { 
-        cache: "no-store",
-        headers: {
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache'
-        }
-      })
-      
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`)
-      }
-      
+      const res = await fetch("/api/bse/announcements?maxPages=5", { cache: "no-store" })
+      if (!res.ok) throw new Error("Failed to fetch")
       const data = await res.json()
-      
-      if (!data.announcements || data.announcements.length === 0) {
-        console.warn("No announcements returned from API")
-      }
-      
       setAnnouncements(data.announcements || [])
-      
       // Auto-select first if none selected
       if (!selectedId && data.announcements?.length > 0) {
         setSelectedId(data.announcements[0].id)
       }
-      
-      // Pre-load quotes for latest 10 announcements
-      if (data.announcements?.length > 0) {
-        preloadQuotes(data.announcements.slice(0, 10))
-      }
-      
-      setError(null)
     } catch (e: any) {
-      console.error(`Failed to fetch announcements (attempt ${retryCount + 1}):`, e)
-      
-      if (retryCount < maxRetries) {
-        // Exponential backoff: 1s, 2s, 4s
-        const delay = Math.pow(2, retryCount) * 1000
-        await new Promise(resolve => setTimeout(resolve, delay))
-        return fetchAnnouncements(retryCount + 1)
-      }
-      
-      setError(e.message || "Failed to load announcements. Please try again.")
+      setError(e.message || "Failed to load announcements")
     } finally {
       setLoading(false)
     }
   }, [selectedId])
-
-  // Pre-load quotes for multiple announcements in parallel
-  const preloadQuotes = useCallback(async (announcements: BSEAnnouncement[]) => {
-    const uniqueScripCodes = Array.from(new Set(announcements.map(a => a.scripCode)))
-    
-    const quotePromises = uniqueScripCodes.map(async (scripCode) => {
-      try {
-        const res = await fetch(`/api/bse/quote?symbol=${encodeURIComponent(scripCode)}`)
-        if (res.ok) {
-          const data = await res.json()
-          if (!data.error && data.price != null) {
-            return {
-              scripCode,
-              quote: {
-                symbol: data.symbol,
-                price: data.price,
-                previousClose: data.previousClose,
-                change: data.change,
-                changePercent: data.changePercent,
-                volume: data.volume,
-                dayHigh: data.dayHigh,
-                dayLow: data.dayLow,
-                marketCap: data.marketCap,
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.error(`Failed to preload quote for ${scripCode}:`, e)
-      }
-      return null
-    })
-    
-    const results = await Promise.all(quotePromises)
-    const newCache = new Map(quoteCache)
-    
-    results.forEach(result => {
-      if (result) {
-        newCache.set(result.scripCode, result.quote)
-      }
-    })
-    
-    setQuoteCache(newCache)
-  }, [quoteCache])
 
   // Initial fetch
   useEffect(() => {
@@ -294,18 +213,9 @@ export default function AnnouncementsPage() {
     return fromCompany || null
   }, [announcements, companyAnnouncements, selectedId])
 
-  // Fetch quote when selection changes - check cache first
+  // Fetch quote when selection changes
   useEffect(() => {
     if (!selected) return
-    
-    // Check if quote is already in cache
-    const cachedQuote = quoteCache.get(selected.scripCode)
-    if (cachedQuote) {
-      setQuote(cachedQuote)
-      setQuoteLoading(false)
-      return
-    }
-    
     const ctrl = new AbortController()
     setQuoteLoading(true)
     fetch(`/api/bse/quote?symbol=${encodeURIComponent(selected.scripCode)}`, { signal: ctrl.signal })
@@ -315,7 +225,7 @@ export default function AnnouncementsPage() {
           setQuote(null)
           return
         }
-        const newQuote = {
+        setQuote({
           symbol: d.symbol,
           price: d.price,
           previousClose: d.previousClose,
@@ -325,69 +235,70 @@ export default function AnnouncementsPage() {
           dayHigh: d.dayHigh,
           dayLow: d.dayLow,
           marketCap: d.marketCap,
-        }
-        setQuote(newQuote)
-        // Add to cache
-        setQuoteCache(prev => new Map(prev).set(selected.scripCode, newQuote))
+        })
       })
       .catch(() => setQuote(null))
       .finally(() => setQuoteLoading(false))
     return () => ctrl.abort()
-  }, [selected?.scripCode, quoteCache])
+  }, [selected?.scripCode])
 
-  // Fetch company announcements and info when selection changes with retry logic
+  // Fetch company announcements and info when selection changes
   useEffect(() => {
     if (!selected) return
-    
     const ctrl = new AbortController()
-    let retryCount = 0
-    const maxRetries = 3
     
-    const fetchWithRetry = async () => {
-      try {
-        const res = await fetch(`/api/bse/company/${selected.scripCode}?days=30`, { 
-          signal: ctrl.signal,
-          cache: 'no-store',
-          headers: {
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
-          }
-        })
+    // Try company-specific API first
+    fetch(`/api/bse/company/${selected.scripCode}?days=30`, { 
+      signal: ctrl.signal,
+      cache: 'no-store'
+    })
+      .then((r) => r.json())
+      .then(async (d) => {
+        console.log(`[Company Announcements] Got ${d.announcements?.length || 0} announcements for ${selected.scripCode}`)
         
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`)
+        // If company API returns announcements, use them
+        if (d.announcements && d.announcements.length > 0) {
+          setCompanyAnnouncements(d.announcements)
+        } else {
+          // Fallback: Filter from main announcements list
+          console.log(`[Company Announcements] No data from company API, filtering from main list`)
+          const filtered = announcements.filter(a => a.scripCode === selected.scripCode)
+          setCompanyAnnouncements(filtered)
+          
+          // If still no results, try direct announcements API
+          if (filtered.length === 0) {
+            try {
+              const annRes = await fetch(`/api/bse/announcements?scripCode=${selected.scripCode}&days=30`, {
+                signal: ctrl.signal,
+                cache: 'no-store'
+              })
+              const annData = await annRes.json()
+              if (annData.announcements?.length > 0) {
+                console.log(`[Company Announcements] Got ${annData.announcements.length} from announcements API`)
+                setCompanyAnnouncements(annData.announcements)
+              }
+            } catch (e) {
+              console.error('[Company Announcements] Fallback failed:', e)
+            }
+          }
         }
         
-        const d = await res.json()
-        
-        setCompanyAnnouncements(d.announcements || [])
         // Store tradingViewSymbol for chart
         setCompanyInfo({
           tradingViewSymbol: d.tradingViewSymbol || null,
           companyName: d.companyName || selected.company,
           symbol: d.symbol || selected.ticker,
         })
-      } catch (e) {
-        console.error(`Failed to fetch company announcements (attempt ${retryCount + 1}):`, e)
-        
-        if (retryCount < maxRetries && !ctrl.signal.aborted) {
-          retryCount++
-          // Exponential backoff: 1s, 2s, 4s
-          const delay = Math.pow(2, retryCount - 1) * 1000
-          await new Promise(resolve => setTimeout(resolve, delay))
-          return fetchWithRetry()
-        }
-        
-        // Final failure - set empty state
-        setCompanyAnnouncements([])
+      })
+      .catch((e) => {
+        console.error('[Company Announcements] Error:', e)
+        // On error, try filtering from main announcements
+        const filtered = announcements.filter(a => a.scripCode === selected.scripCode)
+        setCompanyAnnouncements(filtered)
         setCompanyInfo(null)
-      }
-    }
-    
-    fetchWithRetry()
-    
+      })
     return () => ctrl.abort()
-  }, [selected?.scripCode, selected?.company, selected?.ticker])
+  }, [selected?.scripCode, selected?.company, selected?.ticker, announcements])
 
   // Get local AI summary & verdict for announcement (with caching)
   const getLocalSummary = useCallback((a: BSEAnnouncement): AISummary => {
@@ -409,14 +320,22 @@ export default function AnnouncementsPage() {
   // Filter announcements
   const filtered = useMemo(() => {
     return announcements.filter((a) => {
-      // Date range filter
+      // Date range filter - handle timezone correctly
       const announcementDate = new Date(a.time)
+      
+      // Create date objects and normalize to start/end of day in local timezone
       const fromDate = new Date(filters.fromDate)
       fromDate.setHours(0, 0, 0, 0)
+      
       const toDate = new Date(filters.toDate)
       toDate.setHours(23, 59, 59, 999)
       
-      if (announcementDate < fromDate || announcementDate > toDate) return false
+      // Compare timestamps
+      const annTime = announcementDate.getTime()
+      const fromTime = fromDate.getTime()
+      const toTime = toDate.getTime()
+      
+      if (annTime < fromTime || annTime > toTime) return false
       
       // Noise exclusion filter
       if (excludeNoise && shouldExcludeAnnouncement(`${a.headline} ${a.summary}`)) return false
@@ -476,8 +395,11 @@ export default function AnnouncementsPage() {
 
   return (
     <div className="h-screen max-h-screen bg-gradient-to-b from-black via-zinc-950 to-black text-white flex overflow-hidden">
+      {/* Sidebar Navigation */}
+      <SidebarNav activeId="announcements" newCount={filtered.filter(a => a.impact === "high").length} />
+
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+      <div className="flex-1 ml-16 flex flex-col h-screen overflow-hidden">
         {/* Stock Ticker */}
         <StockTicker 
           stocks={tickerStocks}
@@ -507,9 +429,16 @@ export default function AnnouncementsPage() {
             <div className="flex items-center gap-2">
               <span className="text-xs text-zinc-500">{filtered.length} results</span>
               {activeFiltersCount > 0 && (
-                <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[10px] font-medium">
-                  {activeFiltersCount} filters
-                </span>
+                <div className="flex items-center gap-1">
+                  <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[10px] font-medium">
+                    {activeFiltersCount} active {activeFiltersCount === 1 ? 'filter' : 'filters'}
+                  </span>
+                  {(filters.fromDate !== getDefaultFilters().fromDate || filters.toDate !== getDefaultFilters().toDate) && (
+                    <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 text-[10px] font-medium">
+                      {new Date(filters.fromDate).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })} - {new Date(filters.toDate).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
+                    </span>
+                  )}
+                </div>
               )}
               {/* Search Button */}
               <button 
@@ -540,7 +469,7 @@ export default function AnnouncementsPage() {
 
               {/* Refresh Button */}
               <button 
-                onClick={() => fetchAnnouncements()} 
+                onClick={fetchAnnouncements} 
                 className="p-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all"
               >
                 <RefreshCw className={clsx("h-3.5 w-3.5", loading && "animate-spin")} />
@@ -590,7 +519,7 @@ export default function AnnouncementsPage() {
         {/* Main Content - Master-Detail */}
         <div className="flex-1 flex overflow-hidden min-h-0">
           {/* Left Panel - Announcements List */}
-          <aside className="flex w-[320px] min-w-[280px] max-w-[360px] glass-sidebar flex-col">
+          <aside className="hidden md:flex md:w-[320px] md:min-w-[280px] md:max-w-[360px] glass-sidebar flex-col">
             {/* List */}
             <div className="flex-1 overflow-y-auto scrollbar-thin">
               {loading && announcements.length === 0 && (
@@ -603,7 +532,7 @@ export default function AnnouncementsPage() {
                 <div className="p-8 text-center">
                   <AlertTriangle className="h-10 w-10 text-rose-500 mx-auto mb-3" />
                   <p className="text-sm text-rose-400">{error}</p>
-                  <button onClick={() => fetchAnnouncements()} className="mt-3 text-sm text-cyan-400 hover:underline">
+                  <button onClick={fetchAnnouncements} className="mt-3 text-sm text-cyan-400 hover:underline">
                     Retry
                   </button>
                 </div>
@@ -973,7 +902,13 @@ export default function AnnouncementsPage() {
                       </div>
                     ))}
                     {companyAnnouncements.length === 0 && (
-                      <div className="text-xs text-zinc-500 text-center py-4">No recent announcements</div>
+                      <div className="flex flex-col items-center justify-center py-8 px-4">
+                        <FileText className="h-10 w-10 text-zinc-600 mb-3 opacity-50" />
+                        <p className="text-sm text-zinc-400 font-medium mb-1">No Recent Announcements</p>
+                        <p className="text-xs text-zinc-600 text-center max-w-[200px]">
+                          {selected?.company ? `No announcements found for ${selected.company} in the last 30 days` : 'Select an announcement to view company history'}
+                        </p>
+                      </div>
                     )}
                   </div>
                 </details>
