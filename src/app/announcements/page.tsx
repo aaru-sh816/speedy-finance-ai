@@ -6,7 +6,7 @@ import Link from "next/link"
 import { 
   Search, Filter, Download, Volume2, VolumeX, RefreshCw, TrendingUp, TrendingDown, 
   FileText, Sparkles, X, ExternalLink, ChevronRight, Globe, AlertTriangle, Zap, ZapOff,
-  Calendar, BarChart2, Share2, Bookmark, ChevronDown, MessageSquare, Clock
+  Calendar, BarChart2, Share2, Bookmark, ChevronDown, MessageSquare, Clock, ArrowLeft
 } from "lucide-react"
 import type { BSEAnnouncement, BSEImpact } from "@/lib/bse/types"
 import { AISummaryPanel, VerdictBadge } from "@/components/ai-summary-panel"
@@ -123,11 +123,11 @@ export default function AnnouncementsPage() {
   // Filter state
   const [filters, setFilters] = useState<FilterState>(getDefaultFilters())
   const [showFilterModal, setShowFilterModal] = useState(false)
-  const [showSearchModal, setShowSearchModal] = useState(false)
-  const [query, setQuery] = useState("")
-  const [excludeNoise, setExcludeNoise] = useState(true)
-  
-  // Verdicts & local summary cache for filtered items
+    const [showSearchModal, setShowSearchModal] = useState(false)
+    const [query, setQuery] = useState("")
+    const [excludeNoise, setExcludeNoise] = useState(false)
+    
+    // Verdicts & local summary cache for filtered items
   const verdictsCache = useRef<Map<string, VerdictType>>(new Map())
   const summaryCache = useRef<Map<string, AISummary>>(new Map())
   
@@ -148,6 +148,9 @@ export default function AnnouncementsPage() {
 
   // Ticker stocks
   const [tickerStocks, setTickerStocks] = useState<TickerStock[]>([])
+
+  // Mobile view state
+  const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -172,7 +175,13 @@ export default function AnnouncementsPage() {
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch("/api/bse/announcements?maxPages=5", { cache: "no-store" })
+      
+      const queryParams = new URLSearchParams()
+      queryParams.set("maxPages", "30") // Increased for "all possible past announcements"
+      if (filters.fromDate) queryParams.set("fromDate", filters.fromDate)
+      if (filters.toDate) queryParams.set("toDate", filters.toDate)
+      
+      const res = await fetch(`/api/bse/announcements?${queryParams.toString()}`, { cache: "no-store" })
       if (!res.ok) throw new Error("Failed to fetch")
       const data = await res.json()
       setAnnouncements(data.announcements || [])
@@ -185,12 +194,17 @@ export default function AnnouncementsPage() {
     } finally {
       setLoading(false)
     }
-  }, [selectedId])
+  }, [selectedId, filters.fromDate, filters.toDate])
 
   // Initial fetch
   useEffect(() => {
     fetchAnnouncements()
   }, [])
+
+  // Refetch when dates change
+  useEffect(() => {
+    fetchAnnouncements()
+  }, [filters.fromDate, filters.toDate])
 
   // Auto-refresh - Real-time updates every 30 seconds
   useEffect(() => {
@@ -241,11 +255,11 @@ export default function AnnouncementsPage() {
     return () => ctrl.abort()
   }, [selected?.scripCode])
 
-  // Fetch company announcements and info when selection changes
-  useEffect(() => {
-    if (!selected) return
-    const ctrl = new AbortController()
-    fetch(`/api/bse/company/${selected.scripCode}?days=30`, { signal: ctrl.signal })
+    // Fetch company announcements and info when selection changes
+    useEffect(() => {
+      if (!selected) return
+      const ctrl = new AbortController()
+      fetch(`/api/bse/company/${selected.scripCode}?days=365`, { signal: ctrl.signal })
       .then((r) => r.json())
       .then((d) => {
         let companyAnns = d.announcements || []
@@ -389,99 +403,103 @@ export default function AnnouncementsPage() {
         />
 
         {/* Header */}
-        <header className="flex items-center justify-between gap-4 px-4 py-3 border-b border-white/5 bg-black/20">
-          <div className="flex items-center gap-4">
+          <header className="flex items-center justify-between gap-4 px-4 py-3 border-b border-white/5 bg-black/20">
             <div className="flex items-center gap-4">
               <h1 className="text-lg font-semibold text-white">Announcements</h1>
               <DigitalClock />
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-500">{filtered.length} results</span>
+
+            <div className="flex items-center justify-end gap-2 flex-1">
+            <span className="text-xs text-zinc-500">{filtered.length} results</span>
+            {activeFiltersCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[10px] font-medium">
+                {activeFiltersCount} filters
+              </span>
+            )}
+            {/* Search Button */}
+            <button 
+              onClick={() => setShowSearchModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all text-xs"
+            >
+              <Search className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Ctrl+K</span>
+            </button>
+
+            {/* Filter Button */}
+            <button
+              onClick={() => setShowFilterModal(true)}
+              className={clsx(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs",
+                activeFiltersCount > 0 
+                  ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-300" 
+                  : "bg-zinc-900/70 border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800"
+              )}
+            >
+              <Filter className="h-3.5 w-3.5" />
               {activeFiltersCount > 0 && (
-                <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[10px] font-medium">
-                  {activeFiltersCount} filters
+                <span className="px-1 rounded bg-cyan-500 text-white text-[10px] font-bold">
+                  {activeFiltersCount}
                 </span>
               )}
-              {/* Search Button */}
-              <button 
-                onClick={() => setShowSearchModal(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all text-xs"
-              >
-                <Search className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Ctrl+K</span>
-              </button>
+            </button>
 
-              {/* Filter Button */}
-              <button
-                onClick={() => setShowFilterModal(true)}
-                className={clsx(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs",
-                  activeFiltersCount > 0 
-                    ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-300" 
-                    : "bg-zinc-900/70 border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800"
-                )}
-              >
-                <Filter className="h-3.5 w-3.5" />
-                {activeFiltersCount > 0 && (
-                  <span className="px-1 rounded bg-cyan-500 text-white text-[10px] font-bold">
-                    {activeFiltersCount}
-                  </span>
-                )}
-              </button>
+            {/* Refresh Button */}
+            <button 
+              onClick={fetchAnnouncements} 
+              className="p-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all"
+            >
+              <RefreshCw className={clsx("h-3.5 w-3.5", loading && "animate-spin")} />
+            </button>
 
-              {/* Refresh Button */}
-              <button 
-                onClick={fetchAnnouncements} 
-                className="p-1.5 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all"
-              >
-                <RefreshCw className={clsx("h-3.5 w-3.5", loading && "animate-spin")} />
-              </button>
+            {/* TTS Toggle */}
+            <button
+              onClick={() => setEnableTTS(!enableTTS)}
+              className={clsx(
+                "p-1.5 rounded-lg border transition-all",
+                enableTTS 
+                  ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300" 
+                  : "bg-zinc-900/70 border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800"
+              )}
+            >
+              {enableTTS ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+            </button>
 
-              {/* TTS Toggle */}
-              <button
-                onClick={() => setEnableTTS(!enableTTS)}
-                className={clsx(
-                  "p-1.5 rounded-lg border transition-all",
-                  enableTTS 
-                    ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300" 
-                    : "bg-zinc-900/70 border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800"
-                )}
-              >
-                {enableTTS ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
-              </button>
-
-              {/* Auto-Refresh Toggle */}
-              <button
-                onClick={() => setAutoRefresh(!autoRefresh)}
-                className={clsx(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium",
-                  autoRefresh 
-                    ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300" 
-                    : "bg-zinc-900/70 border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800"
-                )}
-                title={autoRefresh ? "Live updates every 30s" : "Auto-refresh paused"}
-              >
-                {autoRefresh ? (
-                  <>
-                    <Zap className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Live</span>
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  </>
-                ) : (
-                  <>
-                    <ZapOff className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Paused</span>
-                  </>
-                )}
-              </button>
-            </div>
+            {/* Auto-Refresh Toggle */}
+            <button
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              className={clsx(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium",
+                autoRefresh 
+                  ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300" 
+                  : "bg-zinc-900/70 border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800"
+              )}
+              title={autoRefresh ? "Live updates every 30s" : "Auto-refresh paused"}
+            >
+              {autoRefresh ? (
+                <>
+                  <Zap className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Live</span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                </>
+              ) : (
+                <>
+                  <ZapOff className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Paused</span>
+                </>
+              )}
+            </button>
           </div>
         </header>
 
-        {/* Main Content - Master-Detail */}
-        <div className="flex-1 flex overflow-hidden min-h-0">
-          {/* Left Panel - Announcements List */}
-          <aside className="hidden md:flex md:w-[320px] md:min-w-[280px] md:max-w-[360px] glass-sidebar flex-col">
+          {/* Main Content - Master-Detail */}
+          <div className="flex-1 flex overflow-hidden min-h-0 relative">
+            {/* Left Panel - Announcements List */}
+            <aside className={clsx(
+              "flex-col glass-sidebar transition-all duration-300 z-20",
+              mobileView === 'list' ? "flex w-full" : "hidden md:flex",
+              "md:w-[320px] md:min-w-[280px] md:max-w-[360px]"
+            )}>
+
             {/* List */}
             <div className="flex-1 overflow-y-auto scrollbar-thin">
               {loading && announcements.length === 0 && (
@@ -520,11 +538,15 @@ export default function AnnouncementsPage() {
                   'strong_negative': 'text-rose-400',
                 }
                 
-                return (
-                  <button
-                    key={`${a.id}-${idx}`}
-                    onClick={() => setSelectedId(a.id)}
-                    className={clsx(
+                  return (
+                    <button
+                      key={`${a.id}-${idx}`}
+                      onClick={() => {
+                        setSelectedId(a.id)
+                        setMobileView('detail')
+                      }}
+                      className={clsx(
+
                       "w-full text-left p-3 border-b border-white/5 transition-all announcement-item",
                       isActive && "active",
                       isRecent && !isActive && "bg-cyan-500/5"
@@ -574,19 +596,42 @@ export default function AnnouncementsPage() {
                   </button>
                 )
               })}
-              {filtered.length === 0 && !loading && (
-                <div className="flex flex-col items-center justify-center py-16 text-zinc-500">
-                  <FileText className="h-12 w-12 mb-3 opacity-50" />
-                  <p>No announcements match filters</p>
-                </div>
-              )}
-            </div>
+                {filtered.length === 0 && !loading && (
+                  <div className="flex flex-col items-center justify-center py-16 text-zinc-500">
+                    <FileText className="h-12 w-12 mb-3 opacity-50" />
+                    <p>No announcements match filters</p>
+                  </div>
+                )}
+                {filtered.length > 0 && (
+                  <div className="p-4 pt-0">
+                    <button 
+                      onClick={() => fetchAnnouncements()}
+                      className="w-full py-2 rounded-xl bg-white/5 border border-white/10 text-xs text-zinc-400 hover:text-white hover:bg-white/10 transition-all"
+                    >
+                      Load More Past Announcements
+                    </button>
+                  </div>
+                )}
+              </div>
+
           </aside>
 
-          {/* Right Panel - Detail View */}
-          <main className="flex-1 overflow-hidden">
-            {selected ? (
-              <div className="h-full overflow-y-auto scrollbar-thin p-5 pb-24 md:pb-5 space-y-4">
+            {/* Right Panel - Detail View */}
+            <main className={clsx(
+              "flex-1 overflow-hidden transition-all duration-300",
+              mobileView === 'detail' ? "flex" : "hidden md:flex"
+            )}>
+              {selected ? (
+                <div className="h-full w-full overflow-y-auto scrollbar-thin p-5 pb-32 md:pb-5 space-y-4">
+                  {/* Mobile Back Button */}
+                  <button
+                    onClick={() => setMobileView('list')}
+                    className="md:hidden flex items-center gap-2 mb-4 text-cyan-400 font-medium"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    Back to List
+                  </button>
+
                 {/* Company Header - Compact */}
                 <div className="glass-card rounded-2xl p-4">
                   <div className="flex items-start justify-between">
@@ -682,15 +727,15 @@ export default function AnnouncementsPage() {
                       <div className="w-9 h-9 rounded-xl bg-zinc-900 flex items-center justify-center flex-shrink-0">
                         <FileText className="h-4 w-4 text-zinc-300" />
                       </div>
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-sm font-semibold text-white truncate">
-                          {selected.headline}
-                        </span>
-                        <span className="text-xs text-zinc-400 truncate max-w-[220px] md:max-w-[260px]">
-                          {selected.category}
-                          {selected.subCategory && ` · ${selected.subCategory}`}
-                        </span>
-                      </div>
+                          <div className="flex flex-col min-w-0 flex-1">
+                            <span className="text-sm font-semibold text-white leading-snug whitespace-normal">
+                              {selected.headline}
+                            </span>
+                            <span className="text-xs text-zinc-400 mt-1">
+                              {selected.category}
+                              {selected.subCategory && ` · ${selected.subCategory}`}
+                            </span>
+                          </div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {selected.pdfUrl && (
@@ -809,8 +854,9 @@ export default function AnnouncementsPage() {
                     </div>
                   )}
                   
-                  <div className="space-y-1.5 px-4 pb-4 md:pb-4 max-h-64 overflow-y-auto scrollbar-thin">
-                    {companyAnnouncements.map((a, idx) => (
+                    <div className="space-y-1.5 px-4 pb-4 md:pb-4 max-h-[500px] overflow-y-auto scrollbar-thin">
+                      {companyAnnouncements.map((a, idx) => (
+
                       <div
                         key={`${a.id}-${idx}`}
                         className={clsx(
@@ -849,7 +895,10 @@ export default function AnnouncementsPage() {
                           
                           {/* Content - clickable to view */}
                           <button
-                            onClick={() => setSelectedId(a.id)}
+                            onClick={() => {
+                        setSelectedId(a.id)
+                        setMobileView('detail')
+                      }}
                             className="flex-1 text-left"
                           >
                             <div className="flex items-center justify-between mb-1">
@@ -885,79 +934,104 @@ export default function AnnouncementsPage() {
                       {new Date().getHours() >= 9 && new Date().getHours() < 16 ? "Market Open" : "Market Closed"}
                     </span>
                   </summary>
-                  <div className="px-4 pb-4">
-                    {/* Price at Announcement vs Current */}
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      <div className="bg-white/5 rounded-xl p-3">
-                        <div className="text-[10px] text-zinc-500 mb-1">At Announcement</div>
-                        <div className="text-xl font-bold text-white tabular-nums">
-                          {/* Price snapshot not available without historical API */}
-                          —
+                    <div className="px-4 pb-4">
+                      {/* Price at Announcement vs Current */}
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="bg-white/5 rounded-xl p-3">
+                          <div className="text-[10px] text-zinc-500 mb-1">At Announcement</div>
+                          <div className="text-xl font-bold text-white tabular-nums">
+                            {/* Price snapshot not available without historical API */}
+                            —
+                          </div>
+                          <div className="text-[10px] text-cyan-400 mt-1">
+                            {(() => {
+                              const annDate = new Date(selected.time)
+                              const isPostMarket = annDate.getHours() >= 15 || annDate.getHours() < 9
+                              return isPostMarket ? "Announcement Came Post Market Close" : "During Market Hours"
+                            })()}
+                          </div>
                         </div>
-                        <div className="text-[10px] text-cyan-400 mt-1">
-                          {(() => {
-                            const annDate = new Date(selected.time)
-                            const isPostMarket = annDate.getHours() >= 15 || annDate.getHours() < 9
-                            return isPostMarket ? "Announcement Came Post Market Close" : "During Market Hours"
-                          })()}
-                        </div>
-                      </div>
-                      <div className="bg-white/5 rounded-xl p-3">
-                        <div className="text-[10px] text-zinc-500 mb-1">Intraday Change</div>
-                        {typeof quote?.changePercent === 'number' ? (
-                          <>
-                            <div className={clsx(
-                              "text-xl font-bold tabular-nums flex items-center gap-2",
-                              quote.changePercent >= 0 ? "text-emerald-400" : "text-rose-400"
-                            )}>
-                              {quote.changePercent >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-                              {quote.changePercent >= 0 ? "+" : ""}{quote.changePercent.toFixed(2)}%
-                            </div>
-                            <div className="flex items-center gap-2 mt-1">
-                              <span className={clsx(
-                                "px-1.5 py-0.5 rounded text-[9px] font-semibold",
-                                quote.changePercent >= 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
+                        <div className="bg-white/5 rounded-xl p-3">
+                          <div className="text-[10px] text-zinc-500 mb-1">Intraday Change</div>
+                          {typeof quote?.changePercent === 'number' ? (
+                            <>
+                              <div className={clsx(
+                                "text-xl font-bold tabular-nums flex items-center gap-2",
+                                quote.changePercent >= 0 ? "text-emerald-400" : "text-rose-400"
                               )}>
-                                {quote.changePercent >= 0 ? "Positive" : "Negative"}
-                              </span>
+                                {quote.changePercent >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                                {quote.changePercent >= 0 ? "+" : ""}{quote.changePercent.toFixed(2)}%
+                              </div>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className={clsx(
+                                  "px-1.5 py-0.5 rounded text-[9px] font-semibold",
+                                  quote.changePercent >= 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
+                                )}>
+                                  {quote.changePercent >= 0 ? "Positive" : "Negative"}
+                                </span>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-xl font-bold text-zinc-500">—</div>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* Day Stats */}
+                      <div className="grid grid-cols-3 gap-3 mb-4">
+                        <div className="text-center">
+                          <div className="text-[10px] text-zinc-500 mb-0.5">Current</div>
+                          <div className="text-base font-semibold text-cyan-400 tabular-nums">
+                            ₹{quote?.price?.toLocaleString() || "—"}
+                          </div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-[10px] text-zinc-500 mb-0.5">Day High</div>
+                          <div className="text-base font-semibold text-emerald-400 tabular-nums">
+                            ₹{quote?.dayHigh?.toLocaleString() || "—"}
+                          </div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-[10px] text-zinc-500 mb-0.5">Day Low</div>
+                          <div className="text-base font-semibold text-rose-400 tabular-nums">
+                            ₹{quote?.dayLow?.toLocaleString() || "—"}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Interactive AI Events Overlay */}
+                      <div className="relative group">
+                        <TradingViewChart
+                          symbol={companyInfo?.tradingViewSymbol || selected.ticker}
+                          exchange="BSE"
+                          height={260}
+                          fallbackMessage={`Chart unavailable for ${companyInfo?.companyName || selected.company}`}
+                        />
+                        
+                        {/* Event Markers Overlay (Conceptual Fey.ai Style) */}
+                        <div className="absolute top-2 right-2 flex flex-col gap-1 pointer-events-none">
+                          {companyAnnouncements.slice(0, 3).map((ann, i) => (
+                            <div 
+                              key={ann.id}
+                              className="animate-in fade-in slide-in-from-right-2 duration-500"
+                              style={{ animationDelay: `${i * 150}ms` }}
+                            >
+                              <div className="px-2 py-1 rounded-md bg-zinc-900/90 backdrop-blur-md border border-white/10 flex items-center gap-2 shadow-xl pointer-events-auto cursor-help group/ann" title={ann.headline}>
+                                <div className={clsx(
+                                  "w-1.5 h-1.5 rounded-full shrink-0",
+                                  ann.impact === 'high' ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]" : 
+                                  ann.impact === 'medium' ? "bg-amber-400" : "bg-zinc-400"
+                                )} />
+                                <span className="text-[9px] font-medium text-zinc-300 group-hover/ann:text-white transition-colors truncate max-w-[100px]">
+                                  {ann.category}
+                                </span>
+                                <span className="text-[8px] text-zinc-500">{formatDate(ann.time)}</span>
+                              </div>
                             </div>
-                          </>
-                        ) : (
-                          <div className="text-xl font-bold text-zinc-500">—</div>
-                        )}
-                      </div>
-                    </div>
-                    
-                    {/* Day Stats */}
-                    <div className="grid grid-cols-3 gap-3 mb-4">
-                      <div className="text-center">
-                        <div className="text-[10px] text-zinc-500 mb-0.5">Current</div>
-                        <div className="text-base font-semibold text-cyan-400 tabular-nums">
-                          ₹{quote?.price?.toLocaleString() || "—"}
-                        </div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-[10px] text-zinc-500 mb-0.5">Day High</div>
-                        <div className="text-base font-semibold text-emerald-400 tabular-nums">
-                          ₹{quote?.dayHigh?.toLocaleString() || "—"}
-                        </div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-[10px] text-zinc-500 mb-0.5">Day Low</div>
-                        <div className="text-base font-semibold text-rose-400 tabular-nums">
-                          ₹{quote?.dayLow?.toLocaleString() || "—"}
+                          ))}
                         </div>
                       </div>
                     </div>
-                    
-                    {/* TradingView Chart (interactive, area style) - use validated tradingViewSymbol */}
-                    <TradingViewChart
-                      symbol={companyInfo?.tradingViewSymbol || selected.ticker}
-                      exchange="BSE"
-                      height={260}
-                      fallbackMessage={`Chart unavailable for ${companyInfo?.companyName || selected.company}`}
-                    />
-                  </div>
                 </details>
               </div>
             ) : (

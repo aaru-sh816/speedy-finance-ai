@@ -6,9 +6,9 @@ import { MainNav } from "@/components/main-nav"
 export default function Home() {
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <header className="sticky top-0 z-50 backdrop-blur border-b">
-        <div className="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between">
-          <MainNav />
+        <header className="z-50 backdrop-blur border-b">
+          <div className="max-w-7xl px-6 h-16 flex items-center justify-between">
+            <MainNav />
           <div className="hidden md:flex items-center gap-3">
             <Link href="/announcements" className="rounded-full px-4 py-2 border hover:bg-foreground/5 transition">
               Announcements

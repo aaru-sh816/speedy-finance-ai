@@ -332,6 +332,14 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
     setHasHydratedHistory(true)
   }, [])
 
+  // Update state when initialMaximized or isOpen changes
+  useEffect(() => {
+    if (isOpen && initialMaximized) {
+      setIsMaximized(true)
+      setIsExpanded(true)
+    }
+  }, [isOpen, initialMaximized])
+
   // Update when initial changes or pre-selected docs change
   useEffect(() => {
     setActiveAnnouncement(initialAnnouncement)

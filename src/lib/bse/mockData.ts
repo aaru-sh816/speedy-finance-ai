@@ -1,8 +1,10 @@
 import type { BSEAnnouncement } from "./types"
 
 // Mock data for development when BSE API is unavailable
-export function generateMockAnnouncements(): BSEAnnouncement[] {
+export function generateMockAnnouncements(fromDate?: Date, toDate?: Date): BSEAnnouncement[] {
   const now = Date.now()
+  const startDay = fromDate ? fromDate.getTime() : now - (12 * 60 * 60 * 1000)
+  const endDay = toDate ? toDate.getTime() : now
   
   const mockCompanies = [
     { ticker: "RELIANCE", scripCode: "500325", company: "Reliance Industries Ltd" },
@@ -52,12 +54,15 @@ export function generateMockAnnouncements(): BSEAnnouncement[] {
   ]
 
   const announcements: BSEAnnouncement[] = []
+  const count = fromDate && toDate ? 45 : 32 // Vary count slightly to show it's working
 
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < count; i++) {
     const company = mockCompanies[i % mockCompanies.length]
     const catInfo = categories[i % categories.length]
     const headline = headlines[i % headlines.length]
-    const minutesAgo = i * 15 + Math.floor(Math.random() * 10)
+    
+    // Distribute across the range
+    const timestamp = startDay + (Math.random() * (endDay - startDay))
 
     announcements.push({
       id: `mock-${1000 + i}`,
@@ -69,13 +74,14 @@ export function generateMockAnnouncements(): BSEAnnouncement[] {
       category: catInfo.name,
       subCategory: catInfo.sub,
       impact: catInfo.impact,
-      time: new Date(now - minutesAgo * 60 * 1000).toISOString(),
+      time: new Date(timestamp).toISOString(),
       pdfUrl: i % 3 === 0 ? `https://www.bseindia.com/xml-data/corpfiling/AttachLive/mock-${i}.pdf` : null,
       source: "BSE",
-      tags: [catInfo.name.toLowerCase().replace(/\s+/g, "-"), catInfo.sub?.toLowerCase().replace(/\s+/g, "-") || "general"].filter(Boolean),
+      tags: Array.from(new Set([catInfo.name.toLowerCase().replace(/\s+/g, "-"), catInfo.sub?.toLowerCase().replace(/\s+/g, "-") || "general"].filter(Boolean))),
       isCritical: i % 10 === 0,
     })
   }
 
-  return announcements
+  // Sort by time descending
+  return announcements.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
 }

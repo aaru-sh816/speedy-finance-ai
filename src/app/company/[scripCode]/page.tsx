@@ -15,6 +15,10 @@ import { SpeedyPipChat } from "@/components/speedy-pip-chat"
 import { TradingViewChart, ChartPlaceholder } from "@/components/trading-view-chart"
 import { FeyEnhancedQuote } from "@/components/fey/FeyEnhancedQuote"
 import { ShareMenu } from "@/components/share-menu"
+import { DrivingEventBadge } from "@/components/driving-event-badge"
+import { RevenueBreakdown } from "@/components/revenue-breakdown"
+import { InsiderGravity } from "@/components/insider-gravity"
+import { PdfIntelligence } from "@/components/pdf-intelligence"
 
 interface CompanyData {
   scripCode: string
@@ -297,20 +301,32 @@ export default function CompanyPage() {
             </div>
 
             {/* Price & Actions */}
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-6">
               {displayPrice != null && (
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl font-bold text-white tabular-nums">
-                    ₹{Number(displayPrice).toLocaleString()}
-                  </span>
-                  {typeof quote?.changePercent === "number" && (
-                    <span className={clsx(
-                      "flex items-center gap-1 px-2 py-1 rounded-lg text-sm font-semibold",
-                      quote.changePercent >= 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
-                    )}>
-                      {quote.changePercent >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-                      {quote.changePercent >= 0 ? "+" : ""}{quote.changePercent.toFixed(2)}%
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3">
+                    <span className="text-2xl font-bold text-white tabular-nums">
+                      ₹{Number(displayPrice).toLocaleString()}
                     </span>
+                    {typeof quote?.changePercent === "number" && (
+                      <span className={clsx(
+                        "flex items-center gap-1 px-2 py-1 rounded-lg text-sm font-semibold",
+                        quote.changePercent >= 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
+                      )}>
+                        {quote.changePercent >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                        {quote.changePercent >= 0 ? "+" : ""}{quote.changePercent.toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Contextual Why Engine Badge */}
+                  {typeof quote?.changePercent === "number" && (
+                    <DrivingEventBadge
+                      symbol={company?.symbol || (scripCode as string)}
+                      scripCode={scripCode as string}
+                      changePercent={quote.changePercent}
+                      announcements={announcements}
+                    />
                   )}
                 </div>
               )}
@@ -648,47 +664,47 @@ export default function CompanyPage() {
                 {/* Enhanced Quote Display */}
                 <FeyEnhancedQuote scripCode={scripCode as string} />
                 
-                {/* Announcement Card - Fey-style update */}
-                <div className="glass-card rounded-3xl p-5 space-y-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-cyan-500/80 to-emerald-500/80 flex items-center justify-center text-xs font-semibold text-white">
-                        {selectedAnnouncement.ticker.charAt(0)}
-                      </div>
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-xs text-zinc-400">{selectedAnnouncement.company}</span>
-                        <div className="mt-1 flex items-center gap-2 flex-wrap">
-                          <span className="px-2 py-0.5 rounded-full bg-white/10 text-xs text-zinc-200">
-                            {selectedAnnouncement.ticker}
-                          </span>
-                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 font-medium">
-                            {selectedAnnouncement.category}
-                            {selectedAnnouncement.subCategory && ` · ${selectedAnnouncement.subCategory}`}
-                          </span>
-                          {/* Keyword tags derived from headline */}
-                          {(() => {
-                            const h = (selectedAnnouncement.headline || "").toLowerCase()
-                            const tags: { key: string; label: string; cls: string }[] = []
-                            const add = (key: string, label: string, cls: string) => {
-                              if (!tags.find(t => t.key === key)) tags.push({ key, label, cls })
-                            }
-                            if (/order|directions?|penalty|fine|sebi/.test(h)) add("order", "Order", "px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-[11px] font-semibold")
-                            if (/appoint/.test(h)) add("appointment", "Appointment", "px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400 text-[11px]")
-                            if (/resign/.test(h)) add("resignation", "Resignation", "px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 text-[11px]")
-                            if (/allot|preferential|warrant|qip/.test(h)) add("allotment", "Allotment", "px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[11px]")
-                            if (/dividend|bonus|split|rights?/.test(h)) add("corpaction", "Corp. Action", "px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-[11px]")
-                            return tags.map(t => (
-                              <span key={t.key} className={t.cls}>{t.label}</span>
-                            ))
-                          })()}
+                  {/* Announcement Card - Fey-style update */}
+                  <div className="glass-card rounded-3xl p-5 space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-cyan-500/80 to-emerald-500/80 flex items-center justify-center text-xs font-semibold text-white">
+                          {selectedAnnouncement.ticker.charAt(0)}
+                        </div>
+                        <div className="flex flex-col min-w-0 flex-1">
+                          <span className="text-xs text-zinc-400">{selectedAnnouncement.company}</span>
+                          <div className="mt-1 flex items-center gap-2 flex-wrap">
+                            <span className="px-2 py-0.5 rounded-full bg-white/10 text-xs text-zinc-200">
+                              {selectedAnnouncement.ticker}
+                            </span>
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 font-medium whitespace-normal">
+                              {selectedAnnouncement.category}
+                              {selectedAnnouncement.subCategory && ` · ${selectedAnnouncement.subCategory}`}
+                            </span>
+                            {/* Keyword tags derived from headline */}
+                            {(() => {
+                              const h = (selectedAnnouncement.headline || "").toLowerCase()
+                              const tags: { key: string; label: string; cls: string }[] = []
+                              const add = (key: string, label: string, cls: string) => {
+                                if (!tags.find(t => t.key === key)) tags.push({ key, label, cls })
+                              }
+                              if (/order|directions?|penalty|fine|sebi/.test(h)) add("order", "Order", "px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-[11px] font-semibold")
+                              if (/appoint/.test(h)) add("appointment", "Appointment", "px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400 text-[11px]")
+                              if (/resign/.test(h)) add("resignation", "Resignation", "px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 text-[11px]")
+                              if (/allot|preferential|warrant|qip/.test(h)) add("allotment", "Allotment", "px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[11px]")
+                              if (/dividend|bonus|split|rights?/.test(h)) add("corpaction", "Corp. Action", "px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-[11px]")
+                              return tags.map(t => (
+                                <span key={t.key} className={t.cls}>{t.label}</span>
+                              ))
+                            })()}
+                          </div>
                         </div>
                       </div>
+                      <div className="flex flex-col items-end text-[11px] text-zinc-500">
+                        <span className="font-medium">{formatDate(selectedAnnouncement.time)}</span>
+                        <span>{formatTime(selectedAnnouncement.time)}</span>
+                      </div>
                     </div>
-                    <div className="flex flex-col items-end text-[11px] text-zinc-500">
-                      <span className="font-medium">{formatDate(selectedAnnouncement.time)}</span>
-                      <span>{formatTime(selectedAnnouncement.time)}</span>
-                    </div>
-                  </div>
 
                   <div className="text-sm md:text-base text-zinc-100 leading-relaxed">
                     {selectedAnnouncement.summary && selectedAnnouncement.summary !== selectedAnnouncement.headline
@@ -782,8 +798,18 @@ export default function CompanyPage() {
                       fallbackMessage={`Chart unavailable for ${company?.companyName || 'this stock'}`}
                     />
                   </div>
-                </details>
-              </div>
+                  </details>
+
+                  {/* Deep Insights Row */}
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <RevenueBreakdown companyName={company?.companyName || ''} />
+                    <InsiderGravity score={65} sentiment="buying" />
+                  </div>
+
+                  {/* Large PDF Intel Card */}
+                  <PdfIntelligence scripCode={scripCode} companyName={company?.companyName || ''} />
+                </div>
+
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-zinc-500">
                 <FileText className="h-16 w-16 mb-4 opacity-30" />

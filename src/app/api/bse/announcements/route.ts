@@ -28,7 +28,7 @@ export async function GET(request: Request) {
 
     if (useMock) {
       // Use mock data for testing
-      announcements = generateMockAnnouncements()
+      announcements = generateMockAnnouncements(fromDate, toDate)
       
       // Filter by scripCode if provided
       if (scripCode) {
@@ -42,7 +42,7 @@ export async function GET(request: Request) {
       // Fall back to mock data if no results
       if (announcements.length === 0) {
         console.log(`[Announcements API] No data for ${scripCode}, using mock`)
-        const mockData = generateMockAnnouncements()
+        const mockData = generateMockAnnouncements(fromDate, toDate)
         announcements = mockData.filter(a => a.scripCode === scripCode)
         
         // If no matching mock data, use first few items with modified scripCode
@@ -62,7 +62,7 @@ export async function GET(request: Request) {
       // Fall back to mock data if no results (BSE API might be blocking)
       if (announcements.length === 0) {
         console.log("[Announcements API] BSE API returned no data, using mock")
-        announcements = generateMockAnnouncements()
+        announcements = generateMockAnnouncements(fromDate, toDate)
       }
     }
 

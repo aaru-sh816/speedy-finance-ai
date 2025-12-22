@@ -196,9 +196,9 @@ export async function GET(
   const { scripCode } = await params
   const { searchParams } = new URL(request.url)
   
-  const daysStr = searchParams.get("days")
-  const days = daysStr ? parseInt(daysStr, 10) : 30
-  const infoOnly = searchParams.get("infoOnly") === "true"
+    const daysStr = searchParams.get("days")
+    const days = daysStr ? parseInt(daysStr, 10) : 365
+    const infoOnly = searchParams.get("infoOnly") === "true"
 
   if (!scripCode) {
     return NextResponse.json({ error: "Missing scripCode" }, { status: 400 })

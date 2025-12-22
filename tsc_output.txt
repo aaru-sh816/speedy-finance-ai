@@ -1,0 +1,6 @@
+.next/dev/types/validator.ts(233,39): error TS2307: Cannot find module '../../../src/app/api/bse/company/[scripCode]/shareholding/route.js' or its corresponding type declarations.
+src/app/company/[scripCode]/page.tsx(806,22): error TS2741: Property 'recentTrades' is missing in type '{ score: number; sentiment: "buying"; }' but required in type 'InsiderGravityProps'.
+src/app/market/page.tsx(212,43): error TS2304: Cannot find name 'clsx'.
+src/components/revenue-breakdown.tsx(47,15): error TS2322: Type 'RevenueSegment[]' is not assignable to type 'ChartDataInput[]'.
+  Type 'RevenueSegment' is not assignable to type 'ChartDataInput'.
+    Index signature for type 'string' is missing in type 'RevenueSegment'.

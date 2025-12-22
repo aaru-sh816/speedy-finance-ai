@@ -18,10 +18,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased min-h-screen bg-black`}>
-        <FeyNav />
-        {children}
-      </body>
+        <body className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased min-h-screen bg-black overflow-x-hidden`}>
+          <div className="flex flex-col min-h-screen">
+            <FeyNav />
+            <main className="flex-1 flex flex-col relative">
+              {children}
+            </main>
+          </div>
+        </body>
     </html>
   );
 }
