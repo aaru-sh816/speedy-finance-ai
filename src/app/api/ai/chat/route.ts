@@ -1,10 +1,258 @@
+/**
+ * SpeedyPip AI Chat API
+ */
 import { NextResponse } from "next/server"
 import { ensureIndexed, embedTexts, topK } from "@/lib/ai/vector"
+import { getWolfPackAlerts } from "@/lib/bulk-deals/alertSystem"
 
 export const dynamic = "force-dynamic"
 
-// Use a vision-capable model for native PDF understanding
+// Standard model for chat with tool support
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini"
+
+// --- TOOL DEFINITIONS ---
+
+const TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "getBulkDeals",
+      description: "Fetch recent bulk/block deals for a specific stock ticker or scrip code.",
+      parameters: {
+        type: "object",
+        properties: {
+          scripCode: { type: "string", description: "The BSE Scrip Code (e.g., 500209)" },
+          ticker: { type: "string", description: "The stock ticker symbol (e.g., INFY)" },
+          limit: { type: "number", description: "Number of recent deals to fetch (default 5)" }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "getWhaleTimeline",
+      description: "Get the 3-year entry/exit timeline and average cost basis for institutional investors in a stock.",
+      parameters: {
+        type: "object",
+        properties: {
+          scripCode: { type: "string", description: "The BSE Scrip Code" },
+          ticker: { type: "string", description: "The stock ticker symbol" }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "getRiskRadar",
+      description: "Check for negative clustering signals (resignations, auditor issues, bulk selling) within the last 14-30 days.",
+      parameters: {
+        type: "object",
+        properties: {
+          scripCode: { type: "string", description: "The BSE Scrip Code" },
+          ticker: { type: "string", description: "The stock ticker symbol" }
+        }
+      }
+    }
+  },
+    {
+      type: "function",
+      function: {
+        name: "getWolfPackAlerts",
+        description: "Search for 'Wolf Pack' entry signals - scrips where 3+ high-profile HNIs/Funds entered within 30 days.",
+        parameters: {
+          type: "object",
+          properties: {
+            days: { type: "number", description: "Lookback period in days (default 30)" },
+            scripCode: { type: "string", description: "The BSE Scrip Code to filter by (optional)" }
+          }
+        }
+      }
+    },
+
+  {
+    type: "function",
+    function: {
+      name: "getCompanyIntelligence",
+      description: "Get comprehensive summary including revenue breakdown, shareholding patterns, and recent corporate actions.",
+      parameters: {
+        type: "object",
+        properties: {
+          scripCode: { type: "string", description: "The BSE Scrip Code" },
+          ticker: { type: "string", description: "The stock ticker symbol" }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "getStockQuote",
+      description: "Get the latest live stock price (LTP), day high/low, and volume for a specific stock.",
+      parameters: {
+        type: "object",
+        properties: {
+          scripCode: { type: "string", description: "The BSE Scrip Code (e.g., 500209)" },
+          ticker: { type: "string", description: "The stock ticker symbol (e.g., INFY)" }
+        },
+        required: ["scripCode"]
+      }
+      }
+    },
+    {
+      type: "function",
+      function: {
+        name: "getStockIntelligence",
+        description: "Get high-fidelity stacked intelligence for a stock including live price, news activity, and whale logic. Use this when the user asks for a general update or status of a stock (e.g., 'Reliance?', 'How is TCS doing?').",
+        parameters: {
+          type: "object",
+          properties: {
+            scripCode: { type: "string", description: "The BSE Scrip Code" },
+            ticker: { type: "string", description: "The stock ticker symbol" }
+          },
+          required: ["scripCode", "ticker"]
+        }
+      }
+    }
+  ]
+
+// --- TOOL IMPLEMENTATIONS ---
+
+async function executeTool(name: string, args: any): Promise<any> {
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+  
+  try {
+    switch (name) {
+      case "getBulkDeals": {
+        const url = new URL(`${baseUrl}/api/bulk-deals/history`)
+        if (args.scripCode) url.searchParams.set("scripCode", args.scripCode)
+        if (args.ticker) url.searchParams.set("ticker", args.ticker)
+        
+        // Try 30 days first
+        url.searchParams.set("days", "30")
+        let res = await fetch(url.toString())
+        let data = await res.json()
+        
+        // If no deals in 30 days, try 365 days to show historical whale context
+        if (!data.data || data.data.length === 0) {
+          url.searchParams.set("days", "365")
+          res = await fetch(url.toString())
+          data = await res.json()
+        }
+
+        return {
+          deals: data.data?.slice(0, args.limit || 5) || [],
+          summary: data.data?.length > 0 
+            ? `Found ${data.data.length} deals in last ${url.searchParams.get("days")} days.` 
+            : "No deals found recently.",
+          isHistorical: url.searchParams.get("days") === "365"
+        }
+      }
+      
+      case "getWhaleTimeline": {
+        const url = new URL(`${baseUrl}/api/bulk-deals/history`)
+        if (args.scripCode) url.searchParams.set("scripCode", args.scripCode)
+        if (args.ticker) url.searchParams.set("ticker", args.ticker)
+        url.searchParams.set("days", "1095")
+        const res = await fetch(url.toString())
+        const data = await res.json()
+        // Sort original data to get first entry (cost basis)
+        const sorted = [...(data.data || [])].sort((a, b) => (a.date || "").localeCompare(b.date || ""))
+        return {
+          timelineVisible: true,
+          investors: Array.from(new Set(data.data?.map((d: any) => d.clientName || d.client_name))).slice(0, 3),
+          averageCostBasis: sorted.length > 0 ? "Estimated ₹" + sorted[0].price : "Unknown",
+          data: data.data || []
+        }
+      }
+      
+      case "getRiskRadar": {
+        const url = new URL(`${baseUrl}/api/bse/announcements`)
+        if (args.scripCode) url.searchParams.set("scripCode", args.scripCode)
+        const res = await fetch(url.toString())
+        const data = await res.json()
+        const negativeEvents = (data.announcements || []).filter((a: any) => 
+          /resign|auditor|delay|penalty|investigation|default/i.test(a.headline)
+        )
+        return {
+          events: negativeEvents.slice(0, 5),
+          isClustered: negativeEvents.length >= 2,
+          clusterWindow: "14 days",
+          stockName: args.ticker || args.scripCode
+        }
+      }
+      
+        case "getWolfPackAlerts": {
+          const alerts = await getWolfPackAlerts(args.days || 30, args.scripCode)
+          return {
+            activeAlerts: alerts,
+            count: alerts.length,
+            filteredBy: args.scripCode ? "Current Stock" : "All Market"
+          }
+        }
+
+      
+      case "getCompanyIntelligence": {
+        const [quoteRes, actionsRes] = await Promise.all([
+          fetch(`${baseUrl}/api/bse/enhanced-quote?scripCode=${args.scripCode}`).catch(() => null),
+          fetch(`${baseUrl}/api/bse/corporate-actions?scripCode=${args.scripCode}`).catch(() => null)
+        ])
+        
+        const quote = quoteRes?.ok ? await quoteRes.json() : {}
+        const actions = actionsRes?.ok ? await actionsRes.json() : { data: [] }
+        
+        return {
+          profile: quote,
+          recentActions: actions.data?.slice(0, 5) || []
+        }
+      }
+
+        case "getStockQuote": {
+          const res = await fetch(`${baseUrl}/api/bse/enhanced-quote?scripCode=${args.scripCode}`).catch(() => null)
+          const quoteData = res?.ok ? await res.json() : null
+          
+          if (!quoteData || !quoteData.data) {
+            return { error: "Could not fetch live quote at this time." }
+          }
+
+            const q = quoteData.data
+            return {
+              stockName: q.stockName || args.ticker,
+              ltp: Number(q.currentValue || q.ltp || 0),
+              change: Number(q.change || 0),
+              pChange: Number(q.pChange || 0),
+              dayHigh: Number(q.dayHigh || 0),
+              dayLow: Number(q.dayLow || 0),
+              volume: Number(q.totalTradedQuantity || 0),
+              updatedAt: quoteData.timestamp
+            }
+          }
+
+        case "getStockIntelligence": {
+          const [quote, news, whale] = await Promise.all([
+            executeTool("getStockQuote", args),
+            executeTool("getRiskRadar", args),
+            executeTool("getWhaleTimeline", args)
+          ])
+          
+          return {
+            quote,
+            news,
+            whale,
+            ticker: args.ticker,
+            scripCode: args.scripCode
+          }
+        }
+      
+      default:
+        return { error: "Unknown tool" }
+    }
+  } catch (e) {
+    console.error(`Tool execution error [${name}]:`, e)
+    return { error: "Failed to execute tool" }
+  }
+}
 
 // Cache for uploaded PDF file IDs (pdfUrl -> { fileId, timestamp })
 const pdfFileCache = new Map<string, { fileId: string; timestamp: number }>()
@@ -110,26 +358,31 @@ async function extractPdfPages(pdfUrl: string): Promise<{ page: number; text: st
     
     const pdfParser = new PDFParser()
     
-    const textPromise = new Promise<string>((resolve, reject) => {
+    const textPromise = new Promise<{ page: number; text: string }[]>((resolve, reject) => {
       pdfParser.on("pdfParser_dataReady", (pdfData: any) => {
         try {
-          // Extract text from all pages
-          const pages = pdfData?.Pages || []
-          const textParts: string[] = []
+          const rawPages = pdfData?.Pages || []
+          const extractedPages: { page: number; text: string }[] = []
           
-          for (const page of pages) {
+          for (let i = 0; i < rawPages.length; i++) {
+            const page = rawPages[i]
+            const pageTextParts: string[] = []
             const texts = page.Texts || []
             for (const textItem of texts) {
               const runs = textItem.R || []
               for (const run of runs) {
                 if (run.T) {
-                  textParts.push(decodeURIComponent(run.T))
+                  pageTextParts.push(decodeURIComponent(run.T))
                 }
               }
             }
+            const pageText = pageTextParts.join(" ").replace(/\s+/g, " ").trim()
+            if (pageText) {
+              extractedPages.push({ page: i + 1, text: pageText })
+            }
           }
           
-          resolve(textParts.join(" "))
+          resolve(extractedPages)
         } catch (e) {
           reject(e)
         }
@@ -142,18 +395,14 @@ async function extractPdfPages(pdfUrl: string): Promise<{ page: number; text: st
     
     // pdf2json expects Buffer
     pdfParser.parseBuffer(Buffer.from(arrayBuf))
-    const fullText = await textPromise
-    const cleanText = fullText.replace(/\s+/g, " ").trim()
+    const pages = await textPromise
     
-    if (!cleanText) {
+    if (pages.length === 0) {
       console.log("extractPdfPages: No text found in PDF")
       return []
     }
     
-    // Return as single page
-    const pages = [{ page: 1, text: cleanText }]
-    
-    console.log("extractPdfPages: success,", cleanText.length, "chars")
+    console.log("extractPdfPages: success,", pages.length, "pages extracted")
     return pages
   } catch (e) {
     console.error("extractPdfPages failed:", e)
@@ -369,32 +618,32 @@ function getPdfContext(pdfUrl?: string): string {
 - Consider: The announcement may contain tables, financial data, or legal disclosures in the PDF`
 }
 
-const SYSTEM_PROMPT = `You are Speedy AI, a strictly data-driven assistant for Indian stock market announcements.
+const SYSTEM_PROMPT = `You are SpeedyPip AI, the world's most advanced financial intelligence assistant for the Indian Stock Market.
 
-Your role:
-- Work ONLY with the structured announcement fields and the text of the provided PDF and related announcements.
-- Do not use external market knowledge, opinions, or assumptions.
+Your mission:
+Provide hyper-precise, institutional-grade analysis of stocks, bulk deals, and corporate announcements.
 
-Your capabilities:
-1. Extract and summarize key facts, numbers, dates, and entities that are explicitly present in the announcement/PDF.
-2. Highlight important clauses, conditions, and disclosures quoted or clearly paraphrased from the document.
-3. Compare or connect multiple provided announcements only when the relationship is explicitly visible in the data.
+  Your Command Capabilities:
+  1. **Autonomous Intelligence**: You have tools to check LIVE Bulk Deals, Whale Timelines, Risk Radar, Wolf Pack signals, and LIVE Stock Quotes (LTP). Use them proactively.
+  2. **Chain-of-Thought**: Always explain your reasoning briefly. If you see a superstar entering a stock, link it to the "Whale Path" or "Discount Zone". 
+  3. **Deep Interpretation**: When you see whale activity, analyze the "Cost Basis vs Current Price". If the current price is below the Superstar's entry price, it's a "Golden Entry" or "Discount Zone".
+  4. **Institutional Tone**: Be concise, data-driven, and authoritative. Use "Apple-style" minimalism in your narrative—smooth, clean, and high-fidelity.
+    5. **Tool Mastery**: If a user asks about a stock price or LTP, use 'getStockQuote'. For deals, use 'getBulkDeals' and 'getWhaleTimeline'. If they ask about risks, use 'getRiskRadar'. If they ask for multi-investor signals, use 'getWolfPackAlerts'.
+    6. **Stacked Intelligence**: If a user asks a general question about a stock name directly with a question mark (e.g., 'Reliance?', 'Zomato?'), ALWAYS use 'getStockIntelligence' to provide the high-fidelity dashboard. This is your most powerful tool for summary overview.
 
-Strict data-only guidelines:
-- Every statement you make MUST be directly supported by the provided data (announcement fields, PDF text, or related announcement text).
-- Do NOT infer or guess stock price impact, sentiment (positive/negative), or market reaction unless those words appear explicitly in the provided text.
-- Do NOT provide any investment advice, trading recommendations, or suggestions on what the user should do.
-- Do NOT add general market/industry context or background that is not explicitly present in the data.
-- You must NOT introduce any number, date, name, or location that does not appear in either the structured announcement fields or the provided PDF citation snippets.
-- If the user asks about something that is not stated in the provided data, answer: "This is not specified in the provided announcement/PDF data." Do not speculate.
-- You may format the answer in clear bullet points and sections, but content must remain fully grounded in the data.
-- When PDF citations are provided, treat them as the PRIMARY factual source.
 
-Formatting:
-- Be concise but complete with respect to the data.
-- Use bullet points for clarity.
-- Highlight key numbers, dates, and names.
-- Format responses clearly with proper spacing and structure.`
+Key Mental Models:
+- **Wolf Pack**: 3+ HNIs/Funds entering in 30 days is a Tier-1 signal. Coordinated entries suggest massive conviction.
+- **Discount Zone**: Current price is below the Superstar's average cost basis. 
+- **Whale Timeline**: Look for the "First Entry". This establishes the floor. Subsequent buys show increasing conviction.
+- **Negative Clustering**: 2+ independent negative events (e.g., Auditor issue + Selling) in 14 days is a Black Swan warning.
+
+Privacy & Accuracy:
+- Only use the tools provided.
+- Do not hallucinate data. If you don't know, say so.
+- Format responses in clear, aesthetic markdown segments.`
+
+
 
 export async function POST(request: Request) {
   try {
@@ -714,81 +963,71 @@ ${announcement.summary ? `- Summary: ${announcement.summary}` : ""}${pdfContext}
       }
     }
 
-    // Try to upload PDF to OpenAI for native PDF understanding
-    let pdfFileId: string | null = null
-    if (announcement.pdfUrl && openaiKey) {
-      pdfFileId = await uploadPdfToOpenAI(announcement.pdfUrl, openaiKey)
-    }
-
-    // Build messages array with native PDF file input if available
-    const userContent: any[] = []
-    
-    // Add PDF file reference if uploaded successfully
-    if (pdfFileId) {
-      userContent.push({
-        type: "file",
-        file: {
-          file_id: pdfFileId
-        }
-      })
-    }
-    
-    // Add the user's text message
-    userContent.push({
-      type: "text",
-      text: message
-    })
-
+    // Build messages array
     const messages: any[] = [
       { role: "system", content: SYSTEM_PROMPT + "\n\n" + announcementContext },
       ...history.map(h => ({ role: h.role, content: h.content })),
-      { 
-        role: "user", 
-        content: pdfFileId ? userContent : message 
-      }
+      { role: "user", content: message }
     ]
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${openaiKey}`,
-      },
-      body: JSON.stringify({
-        model: OPENAI_MODEL,
-        messages,
-        max_tokens: 1000,
-        temperature: 0,
-        presence_penalty: 0,
-        frequency_penalty: 0,
-      }),
-    })
+    // Initialize widgets array to track tool outputs
+    const widgets: any[] = []
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      console.error("OpenAI API error:", errorData)
-      
-      if (response.status === 401) {
-        return NextResponse.json({
-          response: "⚠️ Invalid OpenAI API key. Please check your OPENAI_API_KEY in .env.local file.",
-          error: "Invalid API key"
-        })
-      }
-      
-      if (response.status === 429) {
-        return NextResponse.json({
-          response: "⚠️ OpenAI rate limit reached. Please try again in a few moments.",
-          error: "Rate limited"
-        })
-      }
-
-      throw new Error(`OpenAI API error: ${response.status}`)
+    // CALL OPENAI
+    const aiResponseFetch = async (msgs: any[]) => {
+      return fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${openaiKey}`,
+        },
+        body: JSON.stringify({
+          model: OPENAI_MODEL,
+          messages: msgs,
+          tools: TOOLS,
+          tool_choice: "auto",
+        }),
+      })
     }
 
-    const data = await response.json()
-    const aiResponse = data.choices?.[0]?.message?.content?.trim()
+    let response = await aiResponseFetch(messages)
+    let data = await response.json()
+    let aiMsg = data.choices?.[0]?.message
 
-    if (!aiResponse) {
+    // HANDLE TOOL CALLS
+    if (aiMsg?.tool_calls) {
+      messages.push(aiMsg)
+      
+      for (const toolCall of aiMsg.tool_calls) {
+        const name = toolCall.function.name
+        const args = JSON.parse(toolCall.function.arguments)
+        
+        console.log(`Executing tool: ${name}`, args)
+        const result = await executeTool(name, args)
+        
+        widgets.push({
+          type: name,
+          data: result,
+          args
+        })
+
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          name: name,
+          content: JSON.stringify(result)
+        })
+      }
+
+      // SECOND CALL TO GET FINAL NARRATIVE
+      response = await aiResponseFetch(messages)
+      data = await response.json()
+      aiMsg = data.choices?.[0]?.message
+    }
+
+    const finalResponse = aiMsg?.content?.trim()
+
+    if (!finalResponse) {
       return NextResponse.json({
         response: "I apologize, but I couldn't generate a response. Please try again.",
         error: "Empty response"
@@ -796,10 +1035,11 @@ ${announcement.summary ? `- Summary: ${announcement.summary}` : ""}${pdfContext}
     }
 
     return NextResponse.json({
-      response: aiResponse,
+      response: finalResponse,
       usage: data.usage,
       pdfUrl: announcement.pdfUrl || null,
       citations: citationItems,
+      widgets: widgets.length > 0 ? widgets : undefined
     })
 
   } catch (error: any) {

@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
-import { 
-  Bell, BellRing, X, Check, CheckCheck, Trash2, 
-  TrendingUp, TrendingDown, Flame, Settings, UserPlus
-} from "lucide-react"
+  import { 
+    Bell, BellRing, X, Check, CheckCheck, Trash2, 
+    TrendingUp, TrendingDown, Flame, Settings, UserPlus, Users
+  } from "lucide-react"
+
 import {
   getAlerts, getUnreadAlertCount, markAlertRead, markAllAlertsRead, clearAlerts,
   type InvestorAlert
@@ -74,21 +75,24 @@ export function AlertCenter({ onFollowClick }: AlertCenterProps) {
     setUnreadCount(0)
   }
 
-  const getAlertIcon = (type: InvestorAlert["type"]) => {
-    switch (type) {
-      case "buy": return <TrendingUp className="h-4 w-4 text-emerald-400" />
-      case "sell": return <TrendingDown className="h-4 w-4 text-rose-400" />
-      case "big_deal": return <Flame className="h-4 w-4 text-amber-400" />
+    const getAlertIcon = (type: InvestorAlert["type"]) => {
+      switch (type) {
+        case "buy": return <TrendingUp className="h-4 w-4 text-emerald-400" />
+        case "sell": return <TrendingDown className="h-4 w-4 text-rose-400" />
+        case "big_deal": return <Flame className="h-4 w-4 text-amber-400" />
+        case "wolf_pack": return <Users className="h-4 w-4 text-cyan-400" />
+      }
     }
-  }
+  
+    const getAlertColor = (type: InvestorAlert["type"]) => {
+      switch (type) {
+        case "buy": return "border-emerald-500/20 bg-emerald-500/5"
+        case "sell": return "border-rose-500/20 bg-rose-500/5"
+        case "big_deal": return "border-amber-500/20 bg-amber-500/5"
+        case "wolf_pack": return "border-cyan-500/20 bg-cyan-500/5"
+      }
+    }
 
-  const getAlertColor = (type: InvestorAlert["type"]) => {
-    switch (type) {
-      case "buy": return "border-emerald-500/20 bg-emerald-500/5"
-      case "sell": return "border-rose-500/20 bg-rose-500/5"
-      case "big_deal": return "border-amber-500/20 bg-amber-500/5"
-    }
-  }
 
   return (
     <div className="relative">
@@ -210,28 +214,37 @@ export function AlertCenter({ onFollowClick }: AlertCenterProps) {
                               <span className="w-2 h-2 rounded-full bg-cyan-400" />
                             )}
                           </div>
-                          <p className="text-xs text-zinc-400 mb-1">
-                            {alert.type === "big_deal" ? "🔥 BIG " : ""}
-                            {alert.type === "buy" ? "Bought" : alert.type === "sell" ? "Sold" : "Bought"}{" "}
-                            <Link 
-                              href={`/bulk-deals/company/${alert.scripCode}`}
-                              className="text-cyan-400 hover:underline"
-                              onClick={e => e.stopPropagation()}
-                            >
-                              {alert.stockName}
-                            </Link>
-                          </p>
-                          <div className="flex items-center justify-between">
-                            <span className={clsx(
-                              "text-xs font-semibold",
-                              alert.type === "buy" || alert.type === "big_deal" ? "text-emerald-400" : "text-rose-400"
-                            )}>
-                              {rupeeCompact(alert.value)}
-                            </span>
-                            <span className="text-[10px] text-zinc-500">
-                              {timeAgo(alert.createdAt)}
-                            </span>
-                          </div>
+                            <p className="text-xs text-zinc-400 mb-1">
+                              {alert.type === "wolf_pack" ? (
+                                <>
+                                  <span className="text-cyan-400 font-bold">WOLF PACK:</span> {alert.involvedInvestors?.length} superstars entered{" "}
+                                </>
+                              ) : (
+                                <>
+                                  {alert.type === "big_deal" ? "🔥 BIG " : ""}
+                                  {alert.type === "buy" ? "Bought" : alert.type === "sell" ? "Sold" : "Bought"}{" "}
+                                </>
+                              )}
+                              <Link 
+                                href={`/bulk-deals/company/${alert.scripCode}`}
+                                className="text-cyan-400 hover:underline font-medium"
+                                onClick={e => e.stopPropagation()}
+                              >
+                                {alert.stockName}
+                              </Link>
+                            </p>
+                            <div className="flex items-center justify-between">
+                              <span className={clsx(
+                                "text-xs font-semibold",
+                                alert.type === "buy" || alert.type === "big_deal" || alert.type === "wolf_pack" ? "text-emerald-400" : "text-rose-400"
+                              )}>
+                                {alert.type === "wolf_pack" ? `Cluster Entry` : rupeeCompact(alert.value)}
+                              </span>
+                              <span className="text-[10px] text-zinc-500">
+                                {timeAgo(alert.createdAt)}
+                              </span>
+                            </div>
+
                         </div>
                       </div>
                     </div>

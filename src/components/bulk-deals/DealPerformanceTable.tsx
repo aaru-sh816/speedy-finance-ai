@@ -31,6 +31,7 @@ interface DealWithPerformance {
 interface Props {
   deals: DealWithPerformance[]
   loading?: boolean
+  onSelectDeal?: (deal: DealWithPerformance) => void
 }
 
 function rupeeCompact(v: number | null | undefined) {
@@ -239,36 +240,41 @@ function QuoteComparisonModal({ deal, onClose }: { deal: DealWithPerformance; on
   )
 }
 
-export function DealPerformanceTable({ deals, loading }: Props) {
-  const [selectedDeal, setSelectedDeal] = useState<DealWithPerformance | null>(null)
-  const [sortBy, setSortBy] = useState<"return" | "value" | "date">("return")
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
-
-  const sortedDeals = [...deals].sort((a, b) => {
-    let valA: number, valB: number
-    if (sortBy === "return") {
-      valA = a.returnPct ?? -999
-      valB = b.returnPct ?? -999
-    } else if (sortBy === "value") {
-      valA = a.dealValue
-      valB = b.dealValue
-    } else {
-      valA = new Date(a.date).getTime()
-      valB = new Date(b.date).getTime()
+  export function DealPerformanceTable({ deals, loading, onSelectDeal }: Props) {
+    const [selectedDeal, setSelectedDeal] = useState<DealWithPerformance | null>(null)
+    const [sortBy, setSortBy] = useState<"return" | "value" | "date">("return")
+    const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
+  
+    const sortedDeals = [...deals].sort((a, b) => {
+      let valA: number, valB: number
+      if (sortBy === "return") {
+        valA = a.returnPct ?? -999
+        valB = b.returnPct ?? -999
+      } else if (sortBy === "value") {
+        valA = a.dealValue
+        valB = b.dealValue
+      } else {
+        valA = new Date(a.date).getTime()
+        valB = new Date(b.date).getTime()
+      }
+      return sortDir === "desc" ? valB - valA : valA - valB
+    })
+  
+    const toggleSort = (field: "return" | "value" | "date") => {
+      if (sortBy === field) {
+        setSortDir(sortDir === "desc" ? "asc" : "desc")
+      } else {
+        setSortBy(field)
+        setSortDir("desc")
+      }
     }
-    return sortDir === "desc" ? valB - valA : valA - valB
-  })
-
-  const toggleSort = (field: "return" | "value" | "date") => {
-    if (sortBy === field) {
-      setSortDir(sortDir === "desc" ? "asc" : "desc")
-    } else {
-      setSortBy(field)
-      setSortDir("desc")
+  
+    const handleDealClick = (deal: DealWithPerformance) => {
+      setSelectedDeal(deal)
+      onSelectDeal?.(deal)
     }
-  }
 
-  if (loading) {
+    if (loading) {
     return (
       <div className="bg-zinc-900/50 border border-white/10 rounded-2xl overflow-hidden">
         <div className="animate-pulse p-6">
@@ -319,45 +325,51 @@ export function DealPerformanceTable({ deals, loading }: Props) {
 
         {/* Mobile Cards View */}
         <div className="sm:hidden divide-y divide-white/5">
-          {sortedDeals.slice(0, 20).map((deal, i) => {
-            const isBuy = deal.side?.toUpperCase() === "BUY"
-            const hasQuote = deal.currentPrice !== null
-            
-            return (
-              <div 
-                key={i} 
-                className="p-4 hover:bg-white/5 transition-colors cursor-pointer"
-                onClick={() => setSelectedDeal(deal)}
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <div className="font-medium text-white text-sm">{deal.securityName}</div>
-                    <div className="text-xs text-zinc-500">{deal.clientName}</div>
-                  </div>
-                  <span className={clsx(
-                    "px-2 py-0.5 rounded text-[10px] font-semibold",
-                    isBuy ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
-                  )}>
-                    {deal.side}
-                  </span>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <div className="text-xs text-zinc-400">
-                    ₹{deal.price?.toFixed(2)} → {hasQuote ? `₹${deal.currentPrice?.toFixed(2)}` : "-"}
-                  </div>
-                  {hasQuote && (
+          {sortedDeals.length > 0 ? (
+            sortedDeals.slice(0, 20).map((deal, i) => {
+              const isBuy = deal.side?.toUpperCase() === "BUY"
+              const hasQuote = deal.currentPrice !== null
+              
+              return (
+                  <div 
+                    key={i} 
+                    className="p-4 hover:bg-white/5 transition-colors cursor-pointer"
+                    onClick={() => handleDealClick(deal)}
+                  >
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <div className="font-medium text-white text-sm">{deal.securityName}</div>
+                      <div className="text-xs text-zinc-500">{deal.clientName}</div>
+                    </div>
                     <span className={clsx(
-                      "text-sm font-bold",
-                      (deal.returnPct || 0) >= 0 ? "text-emerald-400" : "text-rose-400"
+                      "px-2 py-0.5 rounded text-[10px] font-semibold",
+                      isBuy ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
                     )}>
-                      {(deal.returnPct || 0) >= 0 ? "+" : ""}{(deal.returnPct || 0).toFixed(1)}%
+                      {deal.side}
                     </span>
-                  )}
+                  </div>
+                  
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-zinc-400">
+                      ₹{deal.price?.toFixed(2)} → {hasQuote ? `₹${deal.currentPrice?.toFixed(2)}` : "-"}
+                    </div>
+                    {hasQuote && (
+                      <span className={clsx(
+                        "text-sm font-bold",
+                        (deal.returnPct || 0) >= 0 ? "text-emerald-400" : "text-rose-400"
+                      )}>
+                        {(deal.returnPct || 0) >= 0 ? "+" : ""}{(deal.returnPct || 0).toFixed(1)}%
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )
-          })}
+              )
+            })
+          ) : (
+            <div className="p-8 text-center bg-zinc-900/40">
+              <p className="text-xs text-zinc-500 font-medium">No deals found for the selected period.</p>
+            </div>
+          )}
         </div>
 
         {/* Desktop Table View */}
@@ -376,72 +388,84 @@ export function DealPerformanceTable({ deals, loading }: Props) {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {sortedDeals.slice(0, 30).map((deal, i) => {
-                const isBuy = deal.side?.toUpperCase() === "BUY"
-                const hasQuote = deal.currentPrice !== null
-                
-                return (
-                  <tr 
-                    key={i} 
-                    className={clsx(
-                      "hover:bg-white/5 transition-colors cursor-pointer",
-                      deal.isWinner === true && "bg-emerald-500/5",
-                      deal.isWinner === false && "bg-rose-500/5"
-                    )}
-                    onClick={() => setSelectedDeal(deal)}
-                  >
-                    <td className="py-3 px-4">
-                      <div className="font-medium text-white text-sm">{deal.securityName}</div>
-                      <div className="text-[10px] text-zinc-500">{deal.scripCode} • {deal.date}</div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="text-sm text-zinc-300 truncate max-w-[150px]">{deal.clientName}</div>
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      <span className={clsx(
-                        "inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold",
-                        isBuy ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
-                      )}>
-                        {isBuy ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                        {deal.side}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-right text-sm text-white">₹{deal.price?.toFixed(2)}</td>
-                    <td className="py-3 px-4 text-right text-sm text-cyan-400">
-                      {hasQuote ? `₹${deal.currentPrice?.toFixed(2)}` : "-"}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      {hasQuote ? (
-                        <span className={clsx(
-                          "text-sm font-bold",
-                          (deal.returnPct || 0) >= 0 ? "text-emerald-400" : "text-rose-400"
-                        )}>
-                          {(deal.returnPct || 0) >= 0 ? "+" : ""}{(deal.returnPct || 0).toFixed(2)}%
-                        </span>
-                      ) : (
-                        <span className="text-zinc-500">-</span>
+              {sortedDeals.length > 0 ? (
+                sortedDeals.slice(0, 30).map((deal, i) => {
+                  const isBuy = deal.side?.toUpperCase() === "BUY"
+                  const hasQuote = deal.currentPrice !== null
+                  
+                  return (
+                    <tr 
+                      key={i} 
+                      className={clsx(
+                        "hover:bg-white/5 transition-colors cursor-pointer",
+                        deal.isWinner === true && "bg-emerald-500/5",
+                        deal.isWinner === false && "bg-rose-500/5"
                       )}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      {hasQuote ? (
+                        onClick={() => handleDealClick(deal)}
+                    >
+                      <td className="py-3 px-4">
+                        <div className="font-medium text-white text-sm">{deal.securityName}</div>
+                        <div className="text-[10px] text-zinc-500">{deal.scripCode} • {deal.date}</div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="text-sm text-zinc-300 truncate max-w-[150px]">{deal.clientName}</div>
+                      </td>
+                      <td className="py-3 px-4 text-center">
                         <span className={clsx(
-                          "text-sm font-semibold",
-                          (deal.absoluteGain || 0) >= 0 ? "text-emerald-400" : "text-rose-400"
+                          "inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold",
+                          isBuy ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
                         )}>
-                          {rupeeCompact(deal.absoluteGain)}
+                          {isBuy ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                          {deal.side}
                         </span>
-                      ) : (
-                        <span className="text-zinc-500">-</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-zinc-400 hover:text-cyan-400">
-                        <Eye className="h-4 w-4" />
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
+                      </td>
+                      <td className="py-3 px-4 text-right text-sm text-white">₹{deal.price?.toFixed(2)}</td>
+                      <td className="py-3 px-4 text-right text-sm text-cyan-400">
+                        {hasQuote ? `₹${deal.currentPrice?.toFixed(2)}` : "-"}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        {hasQuote ? (
+                          <span className={clsx(
+                            "text-sm font-bold",
+                            (deal.returnPct || 0) >= 0 ? "text-emerald-400" : "text-rose-400"
+                          )}>
+                            {(deal.returnPct || 0) >= 0 ? "+" : ""}{(deal.returnPct || 0).toFixed(2)}%
+                          </span>
+                        ) : (
+                          <span className="text-zinc-500">-</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        {hasQuote ? (
+                          <span className={clsx(
+                            "text-sm font-semibold",
+                            (deal.absoluteGain || 0) >= 0 ? "text-emerald-400" : "text-rose-400"
+                          )}>
+                            {rupeeCompact(deal.absoluteGain)}
+                          </span>
+                        ) : (
+                          <span className="text-zinc-500">-</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-zinc-400 hover:text-cyan-400">
+                          <Eye className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })
+              ) : (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <BarChart3 className="h-8 w-8 text-zinc-700 mb-1" />
+                      <p className="text-sm text-zinc-500 font-medium">No deal records found for the requested period.</p>
+                      <p className="text-[10px] text-zinc-600 uppercase tracking-widest">Speedy Database: BSE Sync-Ready</p>
+                    </div>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

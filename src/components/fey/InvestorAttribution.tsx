@@ -11,10 +11,12 @@ import {
   Zap,
   Filter,
   Users,
-  Activity
+  Activity,
+  History
 } from "lucide-react"
 import { FeyCard } from "./FeyCard"
 import { cn } from "@/lib/utils"
+import { WhaleTimeline } from "./WhaleTimeline"
 
 interface AttributeDeal {
   clientName: string
@@ -26,6 +28,7 @@ interface AttributeDeal {
   changePct: number | null
   quantity: number
   influenceScore?: number
+  history?: any[]
 }
 
 export function InvestorAttribution() {
@@ -115,8 +118,37 @@ export function InvestorAttribution() {
 }
 
 function AttributionCard({ deal }: { deal: AttributeDeal }) {
+  const [history, setHistory] = useState<any[]>(deal.history || [])
+  const [loadingHistory, setLoadingHistory] = useState(false)
   const isPositive = (deal.changePct || 0) >= 0
   const isBuy = deal.side === "BUY"
+
+  useEffect(() => {
+    if (history.length === 0 && !loadingHistory) {
+      fetchHistory()
+    }
+  }, [])
+
+  async function fetchHistory() {
+    setLoadingHistory(true)
+    try {
+      // Fetch specifically for this investor and scrip loop
+      const res = await fetch(`/api/bulk-deals/history?days=1095&exchange=both`)
+      const data = await res.json()
+      if (data.success) {
+        // Filter for this specific investor and scrip
+        const h = data.data.filter((d: any) => 
+          d.clientName.toLowerCase() === deal.clientName.toLowerCase() &&
+          d.scripCode === deal.scripCode
+        )
+        setHistory(h)
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setLoadingHistory(false)
+    }
+  }
 
   return (
     <FeyCard variant="hover" className="p-0 border-none group">
@@ -131,7 +163,7 @@ function AttributionCard({ deal }: { deal: AttributeDeal }) {
 
         {/* Investor Profile */}
         <div className="flex items-center gap-4 mb-6">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-zinc-800 to-zinc-900 flex items-center justify-center border border-zinc-700/30 group-hover:border-cyan-500/30 transition-colors">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-zinc-800 to-zinc-900 flex items-center justify-center border border-zinc-700/30 group-hover:border-cyan-500/30 transition-colors shadow-2xl">
             <Users className="w-5 h-5 text-zinc-400" />
           </div>
           <div className="flex-1 min-w-0">
@@ -141,7 +173,7 @@ function AttributionCard({ deal }: { deal: AttributeDeal }) {
             <div className="flex items-center gap-2">
               <span className={cn(
                 "text-[10px] font-bold px-2 py-0.5 rounded",
-                isBuy ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
+                isBuy ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
               )}>
                 {deal.side}
               </span>
@@ -152,33 +184,40 @@ function AttributionCard({ deal }: { deal: AttributeDeal }) {
           </div>
         </div>
 
+        {/* Whale Timeline Map */}
+        <WhaleTimeline 
+          deals={history.length > 0 ? history : [{ date: '2025-12-21', side: deal.side, price: deal.dealPrice, quantity: deal.quantity }]} 
+          currentPrice={deal.currentPrice}
+          className="mb-6"
+        />
+
         {/* Stock Performance */}
-        <div className="space-y-4">
+        <div className="space-y-3">
           <div className="flex items-center justify-between p-3 bg-zinc-950/30 rounded-2xl border border-zinc-800/10">
             <div>
-              <p className="text-[10px] text-zinc-500 mb-1">Stock</p>
+              <p className="text-[10px] text-zinc-500 mb-1 uppercase tracking-widest font-bold">Stock</p>
               <p className="text-sm font-bold text-white truncate w-32">{deal.securityName}</p>
             </div>
             <div className="text-right">
-              <p className="text-[10px] text-zinc-500 mb-1">Deal Price</p>
+              <p className="text-[10px] text-zinc-500 mb-1 uppercase tracking-widest font-bold">Deal Price</p>
               <p className="text-sm font-bold text-zinc-300">₹{deal.dealPrice.toFixed(2)}</p>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3 bg-zinc-950/30 rounded-2xl border border-zinc-800/10 flex flex-col justify-between">
-              <p className="text-[10px] text-zinc-500">Live Price</p>
+              <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">Live</p>
               <div className="flex items-baseline gap-2 mt-2">
                 <span className="text-lg font-bold text-white">₹{deal.currentPrice?.toFixed(2) || "—"}</span>
               </div>
             </div>
             <div className={cn(
-              "p-3 rounded-2xl border flex flex-col justify-between transition-colors",
+              "p-3 rounded-2xl border flex flex-col justify-between transition-colors shadow-inner",
               isPositive 
                 ? "bg-emerald-500/5 border-emerald-500/20" 
                 : "bg-rose-500/5 border-rose-500/20"
             )}>
-              <p className="text-[10px] text-zinc-500">Performance</p>
+              <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">Gain/Loss</p>
               <div className="flex items-center gap-1 mt-2">
                 {isPositive ? (
                   <ArrowUpRight className="w-4 h-4 text-emerald-400" />
@@ -197,8 +236,8 @@ function AttributionCard({ deal }: { deal: AttributeDeal }) {
         </div>
 
         {/* Action Button */}
-        <button className="w-full mt-6 py-3 bg-white/5 hover:bg-white/10 border border-white/5 rounded-2xl text-[10px] font-bold text-white uppercase tracking-widest transition-all group-hover:border-cyan-500/30 group-hover:bg-cyan-500/10">
-          View Detailed Influence
+        <button className="w-full mt-6 py-3.5 bg-white/5 hover:bg-white/10 border border-white/5 rounded-2xl text-[10px] font-bold text-white uppercase tracking-widest transition-all group-hover:border-cyan-500/30 group-hover:bg-cyan-500/10 group-active:scale-[0.98]">
+          View Detailed Whale Path
         </button>
       </div>
     </FeyCard>

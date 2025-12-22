@@ -17,7 +17,7 @@ export interface FollowedInvestor {
 export interface InvestorAlert {
   id: string
   investorName: string
-  type: "buy" | "sell" | "big_deal"
+  type: "buy" | "sell" | "big_deal" | "wolf_pack"
   stockName: string
   scripCode: string
   value: number
@@ -26,9 +26,13 @@ export interface InvestorAlert {
   date: string
   createdAt: string
   read: boolean
+  isWolfPack?: boolean
+  involvedInvestors?: string[]
 }
 
+
 // Get followed investors from localStorage
+
 export function getFollowedInvestors(): FollowedInvestor[] {
   if (typeof window === "undefined") return []
   try {
@@ -248,20 +252,137 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return false
 }
 
+/**
+ * Detect "Wolf Packs" - when 3+ high-profile investors enter the same stock 
+ * within a short window (e.g., 30 days).
+ */
+export function detectWolfPacks(deals: any[]): InvestorAlert[] {
+  const stockGroups: Record<string, any[]> = {}
+  
+  // Group deals by stock
+  deals.forEach(deal => {
+    const code = deal.scripCode || deal.scrip_code
+    if (!code) return
+    if (!stockGroups[code]) stockGroups[code] = []
+    stockGroups[code].push(deal)
+  })
+  
+  const wolfPackAlerts: InvestorAlert[] = []
+  const existingAlerts = getAlerts()
+  
+  for (const [scripCode, stockDeals] of Object.entries(stockGroups)) {
+    // Filter for BUY deals only for wolf pack entry
+    const buyDeals = stockDeals.filter(d => (d.side || d.deal_type || '').toUpperCase() === 'BUY')
+    
+    // Get unique prominent investors
+    const investors = Array.from(new Set(buyDeals.map(d => d.clientName || d.client_name)))
+    
+    if (investors.length >= 3) {
+      const stockName = buyDeals[0].securityName || buyDeals[0].security_name
+      const date = buyDeals[0].date || buyDeals[0].deal_date
+      
+      // Check if alert already exists for this stock in the last 7 days
+      const recentAlert = existingAlerts.find(a => 
+        a.scripCode === scripCode && 
+        a.type === 'wolf_pack' &&
+        (Date.now() - new Date(a.createdAt).getTime()) < 7 * 24 * 60 * 60 * 1000
+      )
+      
+      if (!recentAlert) {
+        const alert = createAlert({
+          investorName: "Wolf Pack Detected",
+          type: "wolf_pack",
+          stockName: stockName as string,
+          scripCode,
+          value: buyDeals.reduce((sum, d) => sum + (d.quantity * d.price), 0),
+          price: buyDeals[0].price,
+          quantity: buyDeals.reduce((sum, d) => sum + d.quantity, 0),
+          date: date as string,
+          isWolfPack: true,
+          involvedInvestors: investors as string[]
+        })
+        wolfPackAlerts.push(alert)
+      }
+    }
+  }
+  
+  return wolfPackAlerts
+}
+
+/**
+ * Server-side friendly version of wolf pack detection
+ */
+export async function getWolfPackAlerts(days: number = 30, scripCode?: string): Promise<InvestorAlert[]> {
+  try {
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+    const url = new URL(`${baseUrl}/api/bulk-deals/history`)
+    url.searchParams.set("days", days.toString())
+    if (scripCode) url.searchParams.set("scripCode", scripCode)
+    
+    const response = await fetch(url.toString())
+    if (!response.ok) return []
+    
+    const data = await response.json()
+    const deals = data.data || []
+    
+    const stockGroups: Record<string, any[]> = {}
+    deals.forEach((deal: any) => {
+      const code = deal.scripCode || deal.scrip_code
+      if (!code) return
+      if (!stockGroups[code]) stockGroups[code] = []
+      stockGroups[code].push(deal)
+    })
+    
+    const wolfPackAlerts: InvestorAlert[] = []
+    for (const [code, stockDeals] of Object.entries(stockGroups)) {
+      const buyDeals = stockDeals.filter(d => (d.side || d.deal_type || '').toUpperCase() === 'BUY')
+      const investors = Array.from(new Set(buyDeals.map(d => d.clientName || d.client_name)))
+      
+      if (investors.length >= 3) {
+        const stockName = buyDeals[0].securityName || buyDeals[0].security_name
+        const date = buyDeals[0].date || buyDeals[0].deal_date
+        
+        wolfPackAlerts.push({
+          id: `wolf_${code}_${date}`,
+          investorName: "Wolf Pack Detected",
+          type: "wolf_pack",
+          stockName: stockName as string,
+          scripCode: code,
+          value: buyDeals.reduce((sum, d) => sum + (d.quantity * d.price), 0),
+          price: buyDeals[0].price,
+          quantity: buyDeals.reduce((sum, d) => sum + d.quantity, 0),
+          date: date as string,
+          createdAt: new Date().toISOString(),
+          read: false,
+          isWolfPack: true,
+          involvedInvestors: investors as string[]
+        })
+      }
+    }
+    
+    return wolfPackAlerts
+  } catch (e) {
+    console.error("Error in getWolfPackAlerts:", e)
+    return []
+  }
+}
+
 // Show browser notification
 export function showNotification(alert: InvestorAlert): void {
   if (typeof window === "undefined" || !("Notification" in window)) return
   if (Notification.permission !== "granted") return
   
-  const emoji = alert.type === "big_deal" ? "🔥" : alert.type === "buy" ? "📈" : "📉"
-  const action = alert.type === "big_deal" ? "BIG DEAL" : alert.type.toUpperCase()
+  const emoji = alert.type === "wolf_pack" ? "🐺" : alert.type === "big_deal" ? "🔥" : alert.type === "buy" ? "📈" : "📉"
+  const action = alert.type === "wolf_pack" ? "WOLF PACK" : alert.type === "big_deal" ? "BIG DEAL" : alert.type.toUpperCase()
   
   const notification = new Notification(`${emoji} ${alert.investorName}`, {
-    body: `${action}: ${alert.stockName} - ₹${(alert.value / 1e7).toFixed(2)} Cr`,
+    body: alert.type === "wolf_pack" 
+      ? `${alert.involvedInvestors?.length} superstars entered ${alert.stockName}`
+      : `${action}: ${alert.stockName} - ₹${(alert.value / 1e7).toFixed(2)} Cr`,
     icon: "/favicon.ico",
     tag: alert.id,
   })
-  
+
   notification.onclick = () => {
     window.focus()
     notification.close()

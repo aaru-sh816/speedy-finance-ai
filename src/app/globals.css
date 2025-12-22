@@ -15,7 +15,8 @@
 body {
   background: linear-gradient(135deg, #000000 0%, #0a0a0a 50%, #000000 100%);
   color: var(--foreground);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "Inter", system-ui, sans-serif;
+  letter-spacing: -0.011em;
   min-height: 100vh;
 }
 

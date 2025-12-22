@@ -16,9 +16,7 @@ import { TradingViewChart, ChartPlaceholder } from "@/components/trading-view-ch
 import { FeyEnhancedQuote } from "@/components/fey/FeyEnhancedQuote"
 import { ShareMenu } from "@/components/share-menu"
 import { DrivingEventBadge } from "@/components/driving-event-badge"
-import { RevenueBreakdown } from "@/components/revenue-breakdown"
 import { InsiderGravity } from "@/components/insider-gravity"
-import { PdfIntelligence } from "@/components/pdf-intelligence"
 
 interface CompanyData {
   scripCode: string
@@ -801,13 +799,9 @@ export default function CompanyPage() {
                   </details>
 
                   {/* Deep Insights Row */}
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                    <RevenueBreakdown companyName={company?.companyName || ''} />
-                    <InsiderGravity score={65} sentiment="buying" />
+                  <div className="grid grid-cols-1 gap-4">
+                    <InsiderGravity scripCode={scripCode as string} />
                   </div>
-
-                  {/* Large PDF Intel Card */}
-                  <PdfIntelligence scripCode={scripCode} companyName={company?.companyName || ''} />
                 </div>
 
             ) : (

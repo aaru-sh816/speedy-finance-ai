@@ -68,6 +68,9 @@ export async function GET(request: NextRequest) {
     const endParam = searchParams.get("end")
     const daysParam = searchParams.get("days")
     const exchangeParam = (searchParams.get("exchange") || "both").toLowerCase()
+    const scripCodeParam = searchParams.get("scripCode")
+    const tickerParam = searchParams.get("ticker")?.toUpperCase()
+    const personParam = searchParams.get("person")?.toLowerCase()
 
     const today = normalizeDate(new Date())
 
@@ -97,7 +100,7 @@ export async function GET(request: NextRequest) {
     const startStr = formatDate(startDate)
     const endStr = formatDate(endDate)
     
-    // Filter deals by date range and exchange
+    // Filter deals by date range, exchange, and company/person
     const filteredDeals = deals.filter((deal: any) => {
       const dealDate = deal.date || deal.deal_date || ""
       if (dealDate < startStr || dealDate > endStr) return false
@@ -105,6 +108,18 @@ export async function GET(request: NextRequest) {
       if (exchangeParam !== "both") {
         const ex = (deal.exchange || "bse").toLowerCase()
         if (ex !== exchangeParam) return false
+      }
+
+      if (scripCodeParam && deal.scrip_code !== scripCodeParam && deal.scripCode !== scripCodeParam) {
+        return false
+      }
+
+      if (tickerParam && !deal.security_name?.toUpperCase().includes(tickerParam) && !deal.securityName?.toUpperCase().includes(tickerParam)) {
+        return false
+      }
+
+      if (personParam && !deal.client_name?.toLowerCase().includes(personParam) && !deal.clientName?.toLowerCase().includes(personParam)) {
+        return false
       }
       
       return true

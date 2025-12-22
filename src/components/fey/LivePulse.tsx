@@ -26,6 +26,7 @@ interface PulseItem {
   price?: number
   pChange?: number
   isHighImpact?: boolean
+  pdfUrl?: string
 }
 
 export function LivePulse() {
@@ -42,16 +43,40 @@ export function LivePulse() {
     try {
       const res = await fetch("/api/bse/announcements?maxPages=1")
       const data = await res.json()
-      if (data.announcements) {
-        const normalized = data.announcements.map((a: any) => ({
-          scripCode: a.scripCode || a.scrip_code,
-          companyName: a.companyName || a.scripName || a.scrip_name || "Unknown",
-          category: a.categoryName || a.category_name || "General",
-          subject: a.subject || a.details || "",
-          time: new Date(a.time || a.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          timestamp: a.time || a.date,
-          isHighImpact: a.impact === 'high' || a.categoryName?.toLowerCase().includes('result') || a.categoryName?.toLowerCase().includes('acquisition')
-        }))
+        if (data.announcements) {
+              const normalized = data.announcements.map((a: any) => {
+                // Extract company name with robust institutional fallbacks
+                const rawCompany = a.companyName || a.company || a.scripName || a.scrip_name || a.ScripName || a.ShortName;
+                let companyName = rawCompany || "BSE Listed Entity";
+                
+                // If still generic or unknown, try to extract from headline or use ScripCode
+                if ((companyName === "Unknown" || companyName === "BSE Listed Entity") && (a.headline || a.subject)) {
+                  const parts = (a.headline || a.subject).split(':');
+                  if (parts.length > 1 && parts[0].length < 25) {
+                    companyName = parts[0].trim();
+                  } else if (a.scripCode) {
+                    companyName = `Scrip: ${a.scripCode}`;
+                  }
+                }
+
+                // Standardize category labeling
+                const rawCategory = a.category || a.categoryName || a.category_name || a.CategoryName || "Disclosure";
+                const category = rawCategory.charAt(0).toUpperCase() + rawCategory.slice(1).toLowerCase();
+
+                return {
+                  scripCode: a.scripCode || a.scrip_code || a.ScripCode,
+                  companyName,
+                  category,
+                  subject: a.headline || a.subject || a.details || "Corporate Announcement",
+                  time: new Date(a.time || a.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  timestamp: a.time || a.date,
+                  pdfUrl: a.attachmentUrl || a.pdfUrl,
+                  isHighImpact: a.impact === 'high' || 
+                                /result|acquisition|merger|dividend|bonus|split|order|allotment/i.test(category) ||
+                                /significant|major|record date|win/i.test(a.headline || "")
+                }
+              })
+
         setItems(normalized.slice(0, 15))
       }
     } catch (e) {
@@ -119,6 +144,8 @@ function PulseCard({ item }: { item: PulseItem }) {
   const [showTooltip, setShowTooltip] = useState(false)
   const [details, setDetails] = useState<{ bulk: BulkDeal[], corp: CorpAction[] } | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [flashSummary, setFlashSummary] = useState<{ kpis: any, summary: string, sentiment: string } | null>(null)
+  const [flashLoading, setFlashLoading] = useState(false)
   const [quote, setQuote] = useState<{ price: number, pChange: number, name?: string } | null>(null)
 
   useEffect(() => {
@@ -156,10 +183,34 @@ function PulseCard({ item }: { item: PulseItem }) {
       console.error(e)
     } finally {
       setDetailLoading(false)
-    }
   }
+}
 
-  const isPositive = (quote?.pChange || 0) >= 0
+async function fetchFlashSummary() {
+  if (!item.pdfUrl || flashSummary) return
+  setFlashLoading(true)
+  try {
+    const res = await fetch("/api/ai/summary/flash", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pdfUrl: item.pdfUrl, headline: item.subject })
+    })
+    const data = await res.json()
+    if (data.success) {
+      setFlashSummary({
+        kpis: data.kpis,
+        summary: data.summary,
+        sentiment: data.sentiment
+      })
+    }
+  } catch (e) {
+    console.error(e)
+  } finally {
+    setFlashLoading(false)
+  }
+}
+
+const isPositive = (quote?.pChange || 0) >= 0
 
   return (
     <div className="relative group">
@@ -272,13 +323,72 @@ function PulseCard({ item }: { item: PulseItem }) {
               </div>
             )}
             
-            <div className="mt-4 pt-4 border-t border-zinc-800/20 flex justify-between items-center">
-              <button className="text-[9px] font-bold text-cyan-500 uppercase tracking-widest hover:text-cyan-400 transition-colors">
-                View Deep Data Analysis
-              </button>
-              <div className="flex items-center gap-1.5 px-2 py-0.5 bg-cyan-500/10 rounded-full border border-cyan-500/20">
-                <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
-                <span className="text-[8px] font-bold text-cyan-400 uppercase tracking-tighter">Speedy Analysis Ready</span>
+            <div className="mt-4 pt-4 border-t border-zinc-800/20 flex flex-col gap-4">
+              {/* Flash Summary Button & KPIs */}
+              {item.category?.toLowerCase().includes('result') && item.pdfUrl && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <button 
+                      onClick={fetchFlashSummary}
+                      disabled={flashLoading}
+                      className={cn(
+                        "flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all",
+                        flashSummary 
+                          ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" 
+                          : "bg-cyan-500/10 border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20"
+                      )}
+                    >
+                      <Zap className={cn("w-3 h-3", flashLoading && "animate-spin")} />
+                      <span className="text-[10px] font-bold uppercase tracking-widest">
+                        {flashLoading ? "Analyzing..." : flashSummary ? "Summary Ready" : "Flash Summary"}
+                      </span>
+                    </button>
+                    {flashSummary && (
+                      <div className="flex items-center gap-2">
+                        <div className={cn(
+                          "px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-tighter",
+                          flashSummary.sentiment === 'positive' ? "bg-emerald-500/20 text-emerald-400" : 
+                          flashSummary.sentiment === 'negative' ? "bg-rose-500/20 text-rose-400" : "bg-zinc-800 text-zinc-400"
+                        )}>
+                          {flashSummary.sentiment}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {flashSummary?.kpis && (
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="bg-black/40 p-2 rounded-xl border border-zinc-800/50">
+                        <p className="text-[8px] text-zinc-500 uppercase font-black tracking-widest">Revenue</p>
+                        <p className="text-[10px] font-bold text-white">{flashSummary.kpis.revenue || "—"}</p>
+                      </div>
+                      <div className="bg-black/40 p-2 rounded-xl border border-zinc-800/50">
+                        <p className="text-[8px] text-zinc-500 uppercase font-black tracking-widest">PAT</p>
+                        <p className="text-[10px] font-bold text-white">{flashSummary.kpis.pat || "—"}</p>
+                      </div>
+                      <div className="bg-black/40 p-2 rounded-xl border border-zinc-800/50">
+                        <p className="text-[8px] text-zinc-500 uppercase font-black tracking-widest">Margin</p>
+                        <p className="text-[10px] font-bold text-white">{flashSummary.kpis.margin || "—"}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {flashSummary?.summary && (
+                    <p className="text-[10px] text-zinc-300 leading-relaxed italic bg-zinc-900/50 p-2 rounded-xl border border-white/5">
+                      "{flashSummary.summary.slice(0, 150)}..."
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="flex justify-between items-center">
+                <button className="text-[9px] font-bold text-cyan-500 uppercase tracking-widest hover:text-cyan-400 transition-colors">
+                  View Deep Data Analysis
+                </button>
+                <div className="flex items-center gap-1.5 px-2 py-0.5 bg-cyan-500/10 rounded-full border border-cyan-500/20">
+                  <Sparkles className="w-2.5 h-2.5 text-cyan-400" />
+                  <span className="text-[8px] font-bold text-cyan-400 uppercase tracking-tighter">Speedy Analysis Ready</span>
+                </div>
               </div>
             </div>
           </div>
