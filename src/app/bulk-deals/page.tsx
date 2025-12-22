@@ -264,6 +264,41 @@ export default function BulkDealsPage() {
     if (side !== "ALL") rows = rows.filter(d => d.side === side)
     if (exchange !== "ALL") rows = rows.filter(d => d.exchange === exchange)
     
+    // Intraday Filter logic
+    if (intraday === "exclude") {
+      // Group by date, client, and security to find buy+sell pairs
+      const dailyGroups = new Map<string, { buy: number, sell: number }>()
+      rows.forEach(d => {
+        const key = `${d.date}|${d.clientName}|${d.scripCode}`
+        const g = dailyGroups.get(key) || { buy: 0, sell: 0 }
+        if (d.side === "BUY") g.buy += (d.quantity || 0)
+        else g.sell += (d.quantity || 0)
+        dailyGroups.set(key, g)
+      })
+      
+      rows = rows.filter(d => {
+        const key = `${d.date}|${d.clientName}|${d.scripCode}`
+        const g = dailyGroups.get(key)
+        // If they both bought and sold on the same day, exclude if net position is small or they strictly reversed
+        // Standard definition: both actions on same day
+        return !(g && g.buy > 0 && g.sell > 0)
+      })
+    } else if (intraday === "only") {
+      const dailyGroups = new Map<string, { buy: number, sell: number }>()
+      rows.forEach(d => {
+        const key = `${d.date}|${d.clientName}|${d.scripCode}`
+        const g = dailyGroups.get(key) || { buy: 0, sell: 0 }
+        if (d.side === "BUY") g.buy += (d.quantity || 0)
+        else g.sell += (d.quantity || 0)
+        dailyGroups.set(key, g)
+      })
+      rows = rows.filter(d => {
+        const key = `${d.date}|${d.clientName}|${d.scripCode}`
+        const g = dailyGroups.get(key)
+        return (g && g.buy > 0 && g.sell > 0)
+      })
+    }
+
     // Sort
     rows.sort((a, b) => {
       let valA: any, valB: any
@@ -461,7 +496,38 @@ export default function BulkDealsPage() {
             </div>
           </div>
 
-          {/* Smart Money Tracker - Investor Leaderboard with Type Tabs */}
+            {/* Whale Sentiment Indicator */}
+            <div className="mb-8 p-6 bg-zinc-900/30 backdrop-blur-3xl border border-zinc-800/50 rounded-[2rem] relative overflow-hidden group">
+              <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+                <Target className="w-32 h-32 text-white" />
+              </div>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Sparkles className="w-3 h-3 text-cyan-400" />
+                    <span className="text-[10px] font-bold text-cyan-500 uppercase tracking-widest">Whale Sentiment</span>
+                  </div>
+                  <h2 className="text-3xl font-black tracking-tighter text-white uppercase">
+                    Smart Money is {stats.totalBuyValue > stats.totalSellValue ? <span className="text-emerald-500">Accumulating</span> : <span className="text-rose-500">Liquidating</span>}
+                  </h2>
+                  <p className="text-zinc-500 text-sm font-medium mt-1">
+                    Net inflow of <span className={stats.totalBuyValue > stats.totalSellValue ? "text-emerald-400" : "text-rose-400"}>₹{rupeeCompact(Math.abs(stats.totalBuyValue - stats.totalSellValue))}</span> across {stats.uniqueCompanies} companies in this period.
+                  </p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <p className="text-[9px] font-black text-zinc-600 uppercase tracking-widest mb-1">Buy/Sell Ratio</p>
+                    <p className="text-2xl font-black text-white">{(stats.totalBuyValue / (stats.totalSellValue || 1)).toFixed(2)}x</p>
+                  </div>
+                  <div className="w-32 h-2 rounded-full bg-zinc-800 overflow-hidden flex">
+                    <div className="h-full bg-emerald-500" style={{ width: `${(stats.totalBuyValue / (stats.totalBuyValue + stats.totalSellValue || 1)) * 100}%` }} />
+                    <div className="h-full bg-rose-500" style={{ width: `${(stats.totalSellValue / (stats.totalBuyValue + stats.totalSellValue || 1)) * 100}%` }} />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Smart Money Tracker - Investor Leaderboard with Type Tabs */}
           {stats.topInvestors && stats.topInvestors.length > 0 && (
             <InvestorLeaderboard 
               investors={stats.topInvestors} 
@@ -506,21 +572,35 @@ export default function BulkDealsPage() {
               </select>
             </div>
 
-            {/* Exchange Filter */}
-            <div>
-              <label className="text-xs text-zinc-400 mb-2 block">Exchange</label>
-              <select 
-                value={exchange} 
-                onChange={e => setExchange(e.target.value as any)} 
-                className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none focus:border-cyan-500/40 transition-all"
-              >
-                <option value="ALL">All Exchanges</option>
-                <option value="NSE">NSE Only</option>
-                <option value="BSE">BSE Only</option>
-              </select>
-            </div>
+              {/* Exchange Filter */}
+              <div>
+                <label className="text-xs text-zinc-400 mb-2 block">Exchange</label>
+                <select 
+                  value={exchange} 
+                  onChange={e => setExchange(e.target.value as any)} 
+                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none focus:border-cyan-500/40 transition-all"
+                >
+                  <option value="ALL">All Exchanges</option>
+                  <option value="NSE">NSE Only</option>
+                  <option value="BSE">BSE Only</option>
+                </select>
+              </div>
 
-            {/* Date (single day) */}
+              {/* Intraday Filter */}
+              <div>
+                <label className="text-xs text-zinc-400 mb-2 block">Speculative/Intraday</label>
+                <select 
+                  value={intraday} 
+                  onChange={e => setIntraday(e.target.value as any)} 
+                  className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm outline-none focus:border-cyan-500/40 transition-all"
+                >
+                  <option value="all">Include All</option>
+                  <option value="exclude">Hide Intraday</option>
+                  <option value="only">Only Intraday</option>
+                </select>
+              </div>
+
+              {/* Date (single day) */}
             <div>
               <label className="text-xs text-zinc-400 mb-2 block">Date</label>
               <input 

@@ -295,6 +295,48 @@ function extractResultsFacts(pages: { page: number; text: string }[]): ResultsFa
 }
 
 // Helper to fetch related announcements
+// Helper to fetch corporate actions and bulk deals context
+async function fetchMarketDynamics(scripCode: string): Promise<string> {
+  try {
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+    
+    // Fetch bulk deals and corporate actions in parallel
+    const [bulkRes, corpRes] = await Promise.all([
+      fetch(`${baseUrl}/api/bulk-deals/history?scripCode=${scripCode}`).catch(() => null),
+      fetch(`${baseUrl}/api/bse/corporate-actions?scripCode=${scripCode}`).catch(() => null)
+    ])
+    
+    let dynamics = ""
+    
+    if (bulkRes?.ok) {
+      const bulkData = await bulkRes.json()
+      const deals = bulkData.deals || []
+      if (deals.length > 0) {
+        dynamics += `\n\nRECENT BULK DEALS (Last ${deals.length}):\n` + 
+          deals.slice(0, 5).map((d: any) => 
+            `- ${d.date}: ${d.clientName} ${d.side === 'BUY' ? 'BOUGHT' : 'SOLD'} ${d.quantity.toLocaleString()} shares at ₹${d.price}`
+          ).join("\n")
+      }
+    }
+    
+    if (corpRes?.ok) {
+      const corpData = await corpRes.json()
+      const actions = corpData.corporateActions || corpData.data || []
+      if (actions.length > 0) {
+        dynamics += `\n\nUPCOMING CORPORATE ACTIONS:\n` + 
+          actions.slice(0, 5).map((a: any) => 
+            `- ${a.exDate || a.date}: ${a.subject || a.purpose}`
+          ).join("\n")
+      }
+    }
+    
+    return dynamics
+  } catch (e) {
+    console.error("Failed to fetch market dynamics:", e)
+    return ""
+  }
+}
+
 async function fetchRelatedAnnouncements(scripCode: string, currentId: string): Promise<string> {
   try {
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
@@ -395,6 +437,11 @@ export async function POST(request: Request) {
       ? await fetchRelatedAnnouncements(announcement.scripCode, announcement.id)
       : ""
     
+    // Fetch market dynamics (bulk deals & corp actions)
+    const dynamicsContext = !wantsPdfOnly 
+      ? await fetchMarketDynamics(announcement.scripCode)
+      : ""
+      
     let announcementContext = `
 CURRENT ANNOUNCEMENT CONTEXT:
 - Company: ${announcement.company} (${announcement.ticker})
@@ -403,8 +450,9 @@ CURRENT ANNOUNCEMENT CONTEXT:
 - Time: ${announcement.time}
 - Impact Level: ${announcement.impact || "Unknown"}
 - Headline: ${announcement.headline}
-${announcement.summary ? `- Summary: ${announcement.summary}` : ""}${pdfContext}${relatedContext}
+${announcement.summary ? `- Summary: ${announcement.summary}` : ""}${pdfContext}${relatedContext}${dynamicsContext}
 `
+
 
     // RAG: If PDF available, index and retrieve top chunks as citations
     let ragCitations = ""

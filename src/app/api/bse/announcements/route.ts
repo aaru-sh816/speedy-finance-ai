@@ -59,11 +59,7 @@ export async function GET(request: Request) {
         maxPages,
       })
 
-      // Fall back to mock data if no results (BSE API might be blocking)
-      if (announcements.length === 0) {
-        console.log("[Announcements API] BSE API returned no data, using mock")
-        announcements = generateMockAnnouncements(fromDate, toDate)
-      }
+      // No fallback to mock data as per user request
     }
 
     // Extract metadata
@@ -77,7 +73,7 @@ export async function GET(request: Request) {
         categories,
         companiesCount: companies.length,
         fetchedAt: new Date().toISOString(),
-        source: useMock || announcements[0]?.id?.startsWith("mock") ? "mock" : "bse",
+        source: "bse",
         scripCode: scripCode || undefined,
       },
     })
@@ -85,32 +81,14 @@ export async function GET(request: Request) {
     metrics().recordError("BSEAnnouncementsAPIError")
     console.error("BSE announcements API error:", e)
 
-    // Return mock data on error
-    let announcements = generateMockAnnouncements()
-    
-    // Filter by scripCode if provided
-    if (scripCode) {
-      const filtered = announcements.filter(a => a.scripCode === scripCode)
-      if (filtered.length > 0) {
-        announcements = filtered
-      } else {
-        announcements = announcements.slice(0, 5).map(a => ({ ...a, scripCode }))
-      }
-    }
-    
-    const categories = extractCategories(announcements)
-
     return NextResponse.json({
-      announcements,
+      announcements: [],
+      error: e?.message,
       meta: {
-        count: announcements.length,
-        categories,
-        companiesCount: 15,
+        count: 0,
         fetchedAt: new Date().toISOString(),
-        source: "mock",
-        error: e?.message,
-        scripCode: scripCode || undefined,
+        source: "bse",
       },
-    })
+    }, { status: 500 })
   }
 }

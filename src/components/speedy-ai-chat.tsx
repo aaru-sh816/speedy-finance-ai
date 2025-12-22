@@ -298,7 +298,7 @@ ${announcement.pdfUrl ? "- **PDF**: Ready for analysis ✅" : "- **PDF**: Not av
         webSearchResult = await performWebSearch(currentInput)
       }
 
-      // Call main chat API
+      // Call main chat API with enhanced context
       const response = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -323,6 +323,7 @@ ${announcement.pdfUrl ? "- **PDF**: Ready for analysis ✅" : "- **PDF**: Not av
           })),
           includePdfAnalysis: true,
           includeRelatedAnnouncements: true,
+          includeMarketDynamics: true, // New flag for backend to fetch bulk deals/corp actions
         })
       })
 

@@ -31,9 +31,17 @@ async function loadDeals(start: string, end: string) {
   }
 }
 
+// Superstar Investors to identify in deals
+const SUPERSTARS = [
+  "ASHISH KACHOLIA", "MUKUL AGRAWAL", "VIJAY KEDIA", "DOLLY KHANNA", 
+  "REKHA JHUNJHUNWALA", "RAKESH JHUNJHUNWALA", "AKASH BHANSHALI",
+  "ANIL KUMAR GOEL", "ABAKKUS", "STEHARTIA", "PORINJU VELIYATH",
+  "SAURABH MUKHERJEA", "NEMISH SHAH", "MADHUSUDAN KELA"
+]
+
 export async function POST(request: NextRequest) {
   try {
-    const { query, dateRange, totalDeals } = await request.json()
+    const { query, dateRange } = await request.json()
     
     if (!query) {
       return NextResponse.json({ error: "Query required" }, { status: 400 })
@@ -42,6 +50,11 @@ export async function POST(request: NextRequest) {
     // Load deals for context
     const deals = await loadDeals(dateRange?.start || "2024-01-01", dateRange?.end || new Date().toISOString().split("T")[0])
     
+    // Find superstar activity
+    const superstarDeals = deals.filter((d: any) => 
+      SUPERSTARS.some(s => d.clientName?.toUpperCase().includes(s))
+    )
+
     // Calculate summary stats for context
     const buyDeals = deals.filter((d: any) => d.side === "BUY" || d.side === "B" || d.side === "P")
     const sellDeals = deals.filter((d: any) => d.side === "SELL" || d.side === "S")
@@ -77,6 +90,9 @@ export async function POST(request: NextRequest) {
     }
     const topCompanies = Array.from(companyMap.values()).sort((a, b) => b.value - a.value).slice(0, 10)
     
+    // Accumulation detection
+    const accumulation = topCompanies.filter(c => c.buyValue > c.sellValue * 4 && c.value > 1e7)
+
     // Big money deals
     const bigMoneyDeals = deals.filter((d: any) => (Number(d.quantity) || 0) * (Number(d.price) || 0) >= 1e8)
     
@@ -87,46 +103,48 @@ BULK DEALS DATABASE CONTEXT:
 - Total Deals: ${deals.length}
 - Total Buy Value: ${rupeeCompact(totalBuyValue)}
 - Total Sell Value: ${rupeeCompact(totalSellValue)}
+- Net Flow: ${rupeeCompact(totalBuyValue - totalSellValue)}
 - Big Money Deals (≥₹10Cr): ${bigMoneyDeals.length}
 
-TOP 10 INVESTORS BY VALUE:
-${topInvestors.map((inv, i) => `${i+1}. ${inv.name}: ${rupeeCompact(inv.value)} (Buy: ${rupeeCompact(inv.buyValue)}, Sell: ${rupeeCompact(inv.sellValue)}, ${inv.count} deals)`).join('\n')}
+SUPERSTAR ACTIVITY DETECTED:
+${superstarDeals.length > 0 ? superstarDeals.map((d: any) => `- ${d.clientName} ${d.side} ${d.securityName} (${rupeeCompact(d.quantity * d.price)})`).join('\n') : "None detected today."}
 
-TOP 10 COMPANIES BY DEAL VALUE:
-${topCompanies.map((c, i) => `${i+1}. ${c.name} (${c.code}): ${rupeeCompact(c.value)} (Buy: ${rupeeCompact(c.buyValue)}, Sell: ${rupeeCompact(c.sellValue)})`).join('\n')}
+TOP 10 INVESTORS:
+${topInvestors.map((inv, i) => `${i+1}. ${inv.name}: ${rupeeCompact(inv.value)} (Net: ${rupeeCompact(inv.buyValue - inv.sellValue)})`).join('\n')}
+
+STOCKS UNDER ACCUMULATION (High Buy/Sell Ratio):
+${accumulation.map(c => `- ${c.name}: ${rupeeCompact(c.buyValue)} buys`).join('\n')}
 
 RECENT BIG MONEY DEALS:
-${bigMoneyDeals.slice(0, 5).map((d: any) => `- ${d.clientName} ${d.side === 'BUY' || d.side === 'B' || d.side === 'P' ? 'bought' : 'sold'} ${d.securityName} for ${rupeeCompact((Number(d.quantity) || 0) * (Number(d.price) || 0))} on ${d.date}`).join('\n')}
+${bigMoneyDeals.slice(0, 5).map((d: any) => `- ${d.clientName} ${d.side === 'BUY' ? 'bought' : 'sold'} ${d.securityName} for ${rupeeCompact((Number(d.quantity) || 0) * (Number(d.price) || 0))} on ${d.date}`).join('\n')}
 `
 
     // Call OpenAI
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o", // Use stronger model for "best on planet"
       messages: [
         {
           role: "system",
-          content: `You are Speedy AI, a financial intelligence assistant specialized in analyzing bulk deals data from Indian stock exchanges (NSE/BSE).
-
-You have access to a database of ${deals.length} bulk deals.
-
-Your responses should be:
-- Concise and actionable (2-4 sentences max)
-- Data-driven with specific numbers
-- Professional and insightful
-
-When asked about investors or companies, provide specific names and values.
-When asked about patterns, identify accumulation/distribution trends.
-Always mention specific deal values in crores (Cr) or lakhs (L).
-
-${context}`
+          content: `You are Speedy AI, the world's most advanced financial intelligence assistant. 
+          Analyze the Indian stock market bulk deals with extreme precision. 
+          
+          Guidelines:
+          - Identify "Smart Money" movements (HNIs, FIIs, Mutual Funds).
+          - Spot accumulation patterns where buying heavily outweighs selling.
+          - Highlight Superstar investor activity if present.
+          - Be extremely direct, professional, and omit all fluff.
+          - Use specific currency values in Cr or L.
+          
+          Current market context:
+          ${context}`
         },
         {
           role: "user",
           content: query
         }
       ],
-      max_tokens: 300,
-      temperature: 0.3,
+      max_tokens: 500,
+      temperature: 0.2,
     })
 
     const response = completion.choices[0]?.message?.content || "I couldn't analyze the data."

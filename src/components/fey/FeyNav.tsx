@@ -29,8 +29,8 @@ export function FeyNav() {
 
   return (
     <nav className="fixed md:fixed top-auto bottom-6 md:top-2 md:bottom-auto w-full z-[100] animate-in fade-in slide-in-from-bottom-4 md:slide-in-from-top-4 duration-1000 md:py-0 pointer-events-none">
-      <div className="flex items-center justify-center pointer-events-auto px-4">
-        <div className="flex items-center gap-1.5 p-1 md:p-1.5 bg-zinc-950/80 backdrop-blur-3xl border border-white/10 rounded-full shadow-[0_20px_50px_rgba(0,0,0,0.5)] transition-all duration-700 hover:border-white/20">
+      <div className="flex items-center justify-center px-4">
+        <div className="flex items-center gap-1.5 p-1 md:p-1.5 bg-zinc-950/80 backdrop-blur-3xl border border-white/10 rounded-full shadow-[0_20px_50px_rgba(0,0,0,0.5)] transition-all duration-700 hover:border-white/20 pointer-events-auto">
         {navItems.map((item) => {
           const isActive = pathname === item.href
           return (

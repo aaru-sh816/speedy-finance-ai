@@ -4,8 +4,8 @@ gunicorn==21.2.0
 bsedata
 requests==2.31.0
 beautifulsoup4==4.12.2
-pandas==2.1.3
-lxml==4.9.3
+pandas>=2.2.0
+lxml>=5.0.0
 schedule==1.2.0
 python-dotenv==1.0.0
 pdfplumber==0.11.0

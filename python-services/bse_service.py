@@ -385,7 +385,7 @@ def extract_pdf_text():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 8080))
     debug = os.environ.get('DEBUG', 'False').lower() == 'true'
     
     print(f"🚀 BSE Data Microservice starting on port {port}")

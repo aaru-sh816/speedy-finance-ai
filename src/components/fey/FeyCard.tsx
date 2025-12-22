@@ -19,28 +19,34 @@ export function FeyCard({
   return (
     <div
       onClick={onClick}
-      className={cn(
-        "group relative overflow-hidden rounded-2xl p-6",
-        "border transition-all duration-300",
-        variant === "default" && "bg-zinc-900/90 backdrop-blur-xl border-zinc-800/30",
-        variant === "gradient" && "bg-gradient-to-br from-zinc-900/90 to-zinc-950/90 backdrop-blur-xl border-zinc-800/30",
-        variant === "hover" && "bg-zinc-900/90 backdrop-blur-xl border-zinc-800/30 hover:border-zinc-700/50 hover:scale-[1.02] cursor-pointer",
-        onClick && "cursor-pointer",
-        className
-      )}
-    >
-      {children}
-      
-      {/* Subtle glow on hover */}
-      {variant === "hover" && (
-        <div className="absolute inset-0 bg-gradient-to-t 
-          from-emerald-500/5 to-transparent 
-          opacity-0 group-hover:opacity-100 
-          transition-opacity duration-300 pointer-events-none" />
-      )}
-    </div>
-  )
+className={cn(
+"group relative overflow-hidden rounded-2xl p-6",
+"border transition-all duration-500",
+variant === "default" && "bg-zinc-900/40 backdrop-blur-2xl border-zinc-800/20 hover:border-zinc-700/40 hover:shadow-[0_8px_32px_rgba(0,0,0,0.5)]",
+variant === "gradient" && "bg-gradient-to-br from-zinc-900/60 to-zinc-950/80 backdrop-blur-2xl border-zinc-800/30 hover:border-zinc-700/50 shadow-2xl",
+variant === "hover" && "bg-zinc-900/40 backdrop-blur-2xl border-zinc-800/20 hover:border-cyan-500/30 hover:scale-[1.01] hover:shadow-[0_0_30px_rgba(6,182,212,0.1)] cursor-pointer",
+onClick && "cursor-pointer active:scale-[0.98]",
+className
+)}
+>
+{children}
+
+{/* Subtle glow on hover */}
+{variant === "hover" && (
+<div className="absolute inset-0 bg-gradient-to-tr 
+from-cyan-500/5 via-transparent to-purple-500/5 
+opacity-0 group-hover:opacity-100 
+transition-opacity duration-500 pointer-events-none" />
+)}
+
+{/* Decorative elements */}
+<div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity duration-500">
+<div className="w-16 h-16 bg-gradient-to-br from-white to-transparent rounded-full blur-3xl" />
+</div>
+</div>
+)
 }
+
 
 interface FeyStockCardProps {
   symbol: string
