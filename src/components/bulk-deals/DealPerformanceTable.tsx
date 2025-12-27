@@ -49,7 +49,7 @@ function clsx(...v: (string | false | undefined)[]) {
 
 function QuoteComparisonModal({ deal, onClose }: { deal: DealWithPerformance; onClose: () => void }) {
   const isBuy = deal.side?.toUpperCase() === "BUY"
-  const hasQuote = deal.currentPrice !== null
+  const hasQuote = deal.currentPrice !== null && deal.currentPrice !== undefined
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>

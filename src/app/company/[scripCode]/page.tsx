@@ -4,10 +4,10 @@ import { useState, useEffect, useMemo } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { 
-  ArrowLeft, ExternalLink, Globe, TrendingUp, TrendingDown, 
-  FileText, Calendar, Building2, BarChart2, Sparkles, RefreshCw,
-  ChevronDown, ChevronUp, MessageSquare, Share2, Bookmark, Download
-} from "lucide-react"
+    ArrowLeft, ExternalLink, Globe, TrendingUp, TrendingDown, 
+    FileText, Calendar, Building2, BarChart2, Sparkles, RefreshCw,
+    ChevronDown, ChevronUp, MessageSquare, Share2, Bookmark, Download, ChevronRight, ChevronLeft
+  } from "lucide-react"
 import clsx from "clsx"
 import type { BSEAnnouncement } from "@/lib/bse/types"
 import { AISummaryPanel } from "@/components/ai-summary-panel"
@@ -59,10 +59,11 @@ export default function CompanyPage() {
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [showChat, setShowChat] = useState(false)
   const [openChatMaximized, setOpenChatMaximized] = useState(false)
-  const [activeTab, setActiveTab] = useState<'announcements' | 'corporate-actions'>('announcements')
-  const [expandedSection, setExpandedSection] = useState<string>("announcements")
+    const [activeTab, setActiveTab] = useState<'announcements' | 'corporate-actions'>('announcements')
+    const [expandedSection, setExpandedSection] = useState<string>("announcements")
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
-  const displayPrice = useMemo(() => {
+    const displayPrice = useMemo(() => {
     const live = quote?.price ?? null
     const bse = company?.lastPrice ?? null
     if (live != null && bse != null) {
@@ -330,31 +331,51 @@ export default function CompanyPage() {
               )}
               {quoteLoading && <span className="text-xs text-zinc-500 animate-pulse">Loading price...</span>}
 
-              {/* External Links */}
-              <div className="flex items-center gap-2">
-                <a
-                  href={`https://www.bseindia.com/stock-share-price/x/${(chartSymbol || company?.symbol || '').toLowerCase()}/${scripCode}/`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all"
-                  title="BSE India"
-                >
-                  <Globe className="h-4 w-4" />
-                </a>
-                <a
-                  href={`https://www.screener.in/company/${scripCode}/`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all"
-                  title="Screener.in"
-                >
-                  <BarChart2 className="h-4 w-4" />
-                </a>
-                <ShareMenu url={window.location.href} title={`${company?.companyName || scripCode} (${company?.symbol || scripCode}) - Speedy Finance AI`} />
-                <button className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-all">
-                  <Bookmark className="h-4 w-4" />
-                </button>
-              </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <a
+                    href={`https://www.bseindia.com/stock-share-price/x/${(chartSymbol || company?.symbol || '').toLowerCase()}/${scripCode}/`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#121212] border border-white/5 text-[11px] font-medium text-[#00E5FF] hover:bg-[#1A1A1A] transition-all"
+                  >
+                    <Globe className="h-3.5 w-3.5 text-[#00E5FF]" />
+                    <span>BSE</span>
+                    <ExternalLink className="h-3 w-3 text-[#00E5FF]" />
+                  </a>
+
+                  <span className="text-zinc-700 text-[10px]">•</span>
+
+                    <a
+                      href={`https://www.nseindia.com/get-quotes/equity?symbol=${(company?.symbol || '').toUpperCase()}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#121212] border border-white/5 text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-[#1A1A1A] transition-all"
+                    >
+                      <Globe className="h-3.5 w-3.5 opacity-50" />
+                      <span>NSE</span>
+                      <ExternalLink className="h-3 w-3 opacity-50" />
+                    </a>
+
+                  <span className="text-zinc-700 text-[10px]">•</span>
+
+                  <a
+                    href={`https://www.screener.in/company/${scripCode}/`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#121212] border border-white/5 text-[11px] font-medium text-[#FF9100] hover:bg-[#1A1A1A] transition-all"
+                  >
+                    <BarChart2 className="h-3.5 w-3.5 text-[#FF9100]" />
+                    <span>Screener</span>
+                    <ExternalLink className="h-3 w-3 text-[#FF9100]" />
+                  </a>
+
+                  <div className="flex items-center gap-2 ml-2">
+                    <ShareMenu url={window.location.href} title={`${company?.companyName || scripCode} (${company?.symbol || scripCode}) - Speedy Finance AI`} />
+                    <button className="p-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white transition-colors">
+                      <Bookmark className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
             </div>
           </div>
         </header>
@@ -393,10 +414,47 @@ export default function CompanyPage() {
           </button>
         </div>
 
-        {/* Main Content */}
-        <div className="flex-1 flex overflow-hidden min-h-0">
-          {/* Left Panel - Announcements/Corporate Actions (Desktop only) */}
-          <aside className="hidden md:flex md:w-[320px] md:min-w-[280px] border-r border-white/5 flex-col glass-panel">
+          {/* Main Content */}
+          <div className="flex-1 flex overflow-hidden min-h-0 relative">
+            {/* Desktop Toggle Button */}
+            <button
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className={clsx(
+                "hidden md:flex absolute top-1/2 -translate-y-1/2 z-40 w-1.5 h-32 items-center justify-center transition-all duration-500 group overflow-visible",
+                sidebarCollapsed 
+                  ? "left-0 bg-cyan-500/20 hover:bg-cyan-500/40 hover:w-3 rounded-r-full" 
+                  : "left-[320px] -translate-x-full bg-white/5 hover:bg-white/10 hover:w-3 rounded-l-full border-y border-l border-white/10"
+              )}
+              title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+            >
+              {/* Glow Effect */}
+              <div className={clsx(
+                "absolute inset-0 blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-500",
+                sidebarCollapsed ? "bg-cyan-500/20" : "bg-white/10"
+              )} />
+              
+              <div className={clsx(
+                "w-px h-12 rounded-full transition-all duration-500 relative z-10",
+                sidebarCollapsed 
+                  ? "bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)] group-hover:h-20" 
+                  : "bg-zinc-600 group-hover:bg-zinc-300 group-hover:h-20"
+              )} />
+              
+              <div className={clsx(
+                "absolute transition-all duration-500 opacity-0 group-hover:opacity-100 group-hover:scale-110",
+                sidebarCollapsed ? "left-1 text-cyan-400" : "right-1 text-zinc-300"
+              )}>
+                {sidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+              </div>
+            </button>
+
+            {/* Left Panel - Announcements/Corporate Actions (Desktop only) */}
+            <aside className={clsx(
+              "hidden md:flex flex-col glass-panel transition-all duration-500 z-20",
+              sidebarCollapsed 
+                ? "md:w-0 md:min-w-0 md:max-w-0 overflow-hidden opacity-0" 
+                : "md:w-[320px] opacity-100 border-r border-white/5"
+            )}>
             {/* Tab Buttons */}
             <div className="flex border-b border-white/5">
               <button
@@ -669,13 +727,10 @@ export default function CompanyPage() {
                         <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-cyan-500/80 to-emerald-500/80 flex items-center justify-center text-xs font-semibold text-white">
                           {selectedAnnouncement.ticker.charAt(0)}
                         </div>
-                        <div className="flex flex-col min-w-0 flex-1">
-                          <span className="text-xs text-zinc-400">{selectedAnnouncement.company}</span>
-                          <div className="mt-1 flex items-center gap-2 flex-wrap">
-                            <span className="px-2 py-0.5 rounded-full bg-white/10 text-xs text-zinc-200">
-                              {selectedAnnouncement.ticker}
-                            </span>
-                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 font-medium whitespace-normal">
+                          <div className="flex flex-col min-w-0 flex-1">
+                            <span className="text-xs text-zinc-400">{selectedAnnouncement.company}</span>
+                            <div className="mt-1 flex items-center gap-2 flex-wrap">
+                              <span className="text-[11px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 font-medium whitespace-normal">
                               {selectedAnnouncement.category}
                               {selectedAnnouncement.subCategory && ` · ${selectedAnnouncement.subCategory}`}
                             </span>
@@ -737,28 +792,31 @@ export default function CompanyPage() {
                           <span>View PDF</span>
                         </a>
                       )}
-                      <button
-                        onClick={() => setShowChat(true)}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-gradient-to-r from-cyan-500 to-purple-500 text-[11px] text-white font-medium hover:opacity-90 transition-opacity shadow-md shadow-cyan-500/25"
-                      >
-                        <MessageSquare className="h-3.5 w-3.5" />
-                        <span>Analyze with Speedy AI</span>
-                      </button>
+                            <button
+                              onClick={() => setShowChat(true)}
+                              className="relative group px-6 py-2.5 rounded-full bg-zinc-950 border border-white/10 text-[11px] font-bold text-white transition-all duration-500 hover:scale-[1.02] active:scale-[0.98] overflow-hidden shadow-[0_0_20px_rgba(34,211,238,0.05)] hover:shadow-[0_0_30px_rgba(34,211,238,0.25)] hover:border-cyan-500/50"
+                            >
+                              {/* Futuristic Scanner Effect */}
+                              <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full group-hover:animate-shimmer" />
+                              
+                              <div className="relative flex items-center gap-2 tracking-tight">
+                                <div className="relative">
+                                  <Sparkles className="h-3.5 w-3.5 text-cyan-400 group-hover:scale-110 transition-transform duration-500" />
+                                  <div className="absolute inset-0 h-3.5 w-3.5 bg-cyan-400 blur-[8px] opacity-0 group-hover:opacity-50 transition-opacity duration-500" />
+                                </div>
+                                <span className="bg-clip-text text-transparent bg-gradient-to-b from-white to-zinc-400 group-hover:from-white group-hover:to-white transition-colors">
+                                  Analyze with Speedy AI
+                                </span>
+                              </div>
+                            </button>
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between text-[11px] text-zinc-500 pt-1">
-                    <span>BSE Corporate Filings</span>
-                    <a
-                      href={selectedAnnouncement.bseUrl || `https://www.bseindia.com/stock-share-price/x/${selectedAnnouncement.ticker.toLowerCase()}/${selectedAnnouncement.scripCode}/`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 hover:text-zinc-300 transition-colors"
-                    >
-                      <span>View on BSE</span>
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  </div>
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 pt-1 border-t border-white/5 mt-4">
+                      <div className="text-[10px] text-zinc-500 italic">
+                        BSE Corporate Filings
+                      </div>
+                    </div>
                 </div>
 
                 {/* AI Summary */}

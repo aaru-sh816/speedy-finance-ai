@@ -5,9 +5,9 @@ import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { 
   Search, Filter, Download, Volume2, VolumeX, RefreshCw, TrendingUp, TrendingDown, 
-  FileText, Sparkles, X, ExternalLink, ChevronRight, Globe, AlertTriangle, Zap, ZapOff,
-  Calendar, BarChart2, Share2, Bookmark, ChevronDown, MessageSquare, Clock, ArrowLeft
-} from "lucide-react"
+    FileText, Sparkles, X, ExternalLink, ChevronRight, Globe, AlertTriangle, Zap, ZapOff,
+    Calendar, BarChart2, Share2, Bookmark, ChevronDown, MessageSquare, Clock, ArrowLeft, ChevronLeft
+  } from "lucide-react"
 import type { BSEAnnouncement, BSEImpact } from "@/lib/bse/types"
 import { AISummaryPanel, VerdictBadge } from "@/components/ai-summary-panel"
 import { TradingViewChart } from "@/components/trading-view-chart"
@@ -17,6 +17,7 @@ import { StockTicker, type TickerStock } from "@/components/stock-ticker"
 import { SearchModal } from "@/components/search-modal"
 import { SpeedyPipChat } from "@/components/speedy-pip-chat"
 import { DigitalClock } from "@/components/digital-clock"
+import { ShareMenu } from "@/components/share-menu"
 
 function clsx(...v: (string | false | undefined)[]) {
   return v.filter(Boolean).join(" ")
@@ -134,6 +135,7 @@ export default function AnnouncementsPage() {
   // Quote state
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
+  const [priceAtAnnouncement, setPriceAtAnnouncement] = useState<number | null>(null)
   
   // Company info for TradingView
   const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null)
@@ -151,6 +153,7 @@ export default function AnnouncementsPage() {
 
   // Mobile view state
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -231,6 +234,8 @@ export default function AnnouncementsPage() {
     if (!selected) return
     const ctrl = new AbortController()
     setQuoteLoading(true)
+    setPriceAtAnnouncement(null)
+    
     fetch(`/api/bse/quote?symbol=${encodeURIComponent(selected.scripCode)}`, { signal: ctrl.signal })
       .then((r) => r.json())
       .then((d) => {
@@ -249,11 +254,29 @@ export default function AnnouncementsPage() {
           dayLow: d.dayLow,
           marketCap: d.marketCap,
         })
+        
+        // For announcements from the same day, use previous close as reference price
+        const annDate = new Date(selected.time)
+        const today = new Date()
+        const isSameDay = annDate.toDateString() === today.toDateString()
+        const isPostMarket = annDate.getHours() >= 15 || annDate.getHours() < 9
+        
+        if (isSameDay || isPostMarket) {
+          // Use previous close as reference price for same-day or post-market announcements
+          if (d.previousClose) {
+            setPriceAtAnnouncement(d.previousClose)
+          }
+        } else {
+          // For older announcements, use previous close as approximation
+          if (d.previousClose) {
+            setPriceAtAnnouncement(d.previousClose)
+          }
+        }
       })
       .catch(() => setQuote(null))
       .finally(() => setQuoteLoading(false))
     return () => ctrl.abort()
-  }, [selected?.scripCode])
+  }, [selected?.scripCode, selected?.time])
 
     // Fetch company announcements and info when selection changes
     useEffect(() => {
@@ -493,11 +516,45 @@ export default function AnnouncementsPage() {
 
           {/* Main Content - Master-Detail */}
           <div className="flex-1 flex overflow-hidden min-h-0 relative">
+            {/* Desktop Toggle Button */}
+            <button
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className={clsx(
+                "hidden md:flex absolute top-1/2 -translate-y-1/2 z-40 w-1.5 h-32 items-center justify-center transition-all duration-500 group overflow-visible",
+                sidebarCollapsed 
+                  ? "left-0 bg-cyan-500/20 hover:bg-cyan-500/40 hover:w-3 rounded-r-full" 
+                  : "left-[320px] -translate-x-full bg-white/5 hover:bg-white/10 hover:w-3 rounded-l-full border-y border-l border-white/10"
+              )}
+              title={sidebarCollapsed ? "Expand Announcements" : "Collapse Announcements"}
+            >
+              {/* Glow Effect */}
+              <div className={clsx(
+                "absolute inset-0 blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-500",
+                sidebarCollapsed ? "bg-cyan-500/20" : "bg-white/10"
+              )} />
+              
+              <div className={clsx(
+                "w-px h-12 rounded-full transition-all duration-500 relative z-10",
+                sidebarCollapsed 
+                  ? "bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)] group-hover:h-20" 
+                  : "bg-zinc-600 group-hover:bg-zinc-300 group-hover:h-20"
+              )} />
+              
+              <div className={clsx(
+                "absolute transition-all duration-500 opacity-0 group-hover:opacity-100 group-hover:scale-110",
+                sidebarCollapsed ? "left-1 text-cyan-400" : "right-1 text-zinc-300"
+              )}>
+                {sidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+              </div>
+            </button>
+
             {/* Left Panel - Announcements List */}
             <aside className={clsx(
-              "flex-col glass-sidebar transition-all duration-300 z-20",
+              "flex-col glass-sidebar transition-all duration-500 z-20",
               mobileView === 'list' ? "flex w-full" : "hidden md:flex",
-              "md:w-[320px] md:min-w-[280px] md:max-w-[360px]"
+              sidebarCollapsed 
+                ? "md:w-0 md:min-w-0 md:max-w-0 overflow-hidden opacity-0" 
+                : "md:w-[320px] opacity-100"
             )}>
 
             {/* List */}
@@ -656,65 +713,76 @@ export default function AnnouncementsPage() {
                         {quoteLoading && <span className="text-xs text-zinc-500 animate-pulse">Loading...</span>}
                       </div>
                       
-                      {/* Links Row */}
-                      <div className="flex items-center gap-3 mt-2 flex-wrap">
-                        {/* BSE Link */}
-                        <a
-                          href={selected.bseUrl || `https://www.bseindia.com/stock-share-price/x/${selected.ticker.toLowerCase()}/${selected.scripCode}/`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
-                        >
-                          <Globe className="h-3.5 w-3.5" />
-                          bseindia.com
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                        
-                        <span className="text-zinc-700">•</span>
-                        
-                        {/* NSE Link */}
-                        <a
-                          href={`https://www.nseindia.com/get-quotes/equity?symbol=${encodeURIComponent(selected.ticker)}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-300 transition-colors"
-                        >
-                          NSE: {selected.ticker}
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
+                            {/* Links Row */}
+                            <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                  {/* BSE Link */}
+                                  <a
+                                    href={selected.bseUrl || `https://www.bseindia.com/stock-share-price/x/${selected.ticker.toLowerCase()}/${selected.scripCode}/`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#121212] border border-white/5 text-[11px] font-medium text-[#00E5FF] hover:bg-[#1A1A1A] transition-all"
+                                  >
+                                    <Globe className="h-3.5 w-3.5 text-[#00E5FF]" />
+                                    <span>BSE</span>
+                                    <ExternalLink className="h-3 w-3 text-[#00E5FF]" />
+                                  </a>
 
-                        <span className="text-zinc-700">•</span>
+                                  <span className="text-zinc-700 text-[10px]">•</span>
 
-                        {/* Screener Link (use scripCode to avoid 404) */}
-                        <a
-                          href={`https://www.screener.in/company/${selected.scripCode}/`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1.5 text-xs text-orange-400 hover:text-orange-300 transition-colors"
-                        >
-                          <BarChart2 className="h-3.5 w-3.5" />
-                          Screener
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
+                                  {/* NSE Link */}
+                                  <a
+                                    href={`https://www.nseindia.com/get-quotes/equity?symbol=${selected.ticker.toUpperCase()}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#121212] border border-white/5 text-[11px] font-medium text-zinc-400 hover:text-white hover:bg-[#1A1A1A] transition-all"
+                                  >
+                                    <Globe className="h-3.5 w-3.5 opacity-50" />
+                                    <span>NSE</span>
+                                    <ExternalLink className="h-3 w-3 opacity-50" />
+                                  </a>
 
-                        <span className="text-zinc-700">•</span>
+                                <span className="text-zinc-700 text-[10px]">•</span>
+                                
+                                {/* Screener Link */}
+                                <a
+                                  href={`https://www.screener.in/company/${selected.scripCode}/`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#121212] border border-white/5 text-[11px] font-medium text-[#FF9100] hover:bg-[#1A1A1A] transition-all"
+                                >
+                                  <BarChart2 className="h-3.5 w-3.5 text-[#FF9100]" />
+                                  <span>Screener</span>
+                                  <ExternalLink className="h-3 w-3 text-[#FF9100]" />
+                                </a>
 
-                        {/* BSE Code */}
-                        <span className="text-xs text-zinc-500">
-                          BSE: {selected.scripCode}
-                        </span>
+                                <span className="text-zinc-700 text-[10px]">•</span>
+                                
+                                {/* Speedy Finance Internal Link */}
+                                <Link
+                                  href={`/company/${selected.scripCode}`}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#121212] border border-emerald-500/30 text-[11px] font-medium text-[#00E676] hover:bg-[#1A1A1A] transition-all"
+                                >
+                                  <Sparkles className="h-3.5 w-3.5 text-[#00E676]" />
+                                  <span>Speedy Alpha</span>
+                                  <ChevronRight className="h-3 w-3 text-[#00E676]" />
+                                </Link>
+
+                                <span className="text-zinc-700 text-[10px]">•</span>
+
+                                {/* Scrip Code */}
+                                <span className="text-zinc-500 text-[11px] font-medium px-1">
+                                  BSE: {selected.scripCode}
+                                </span>
+                              </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <ShareMenu url={`${window.location.origin}/company/${selected.scripCode}`} title={`${selected.company} - Speedy Finance AI`} />
+                        <button className="p-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white transition-colors">
+                          <Bookmark className="h-5 w-5" />
+                        </button>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-2">
-                      <button className="p-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white transition-colors">
-                        <Share2 className="h-5 w-5" />
-                      </button>
-                      <button className="p-2 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white transition-colors">
-                        <Bookmark className="h-5 w-5" />
-                      </button>
-                    </div>
-                  </div>
 
                   <div className="text-sm md:text-base text-zinc-100 leading-relaxed">
                     {selected.summary && selected.summary !== selected.headline
@@ -749,13 +817,23 @@ export default function AnnouncementsPage() {
                           <span>View PDF</span>
                         </a>
                       )}
-                      <button
-                        onClick={() => setShowChat(true)}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-gradient-to-r from-cyan-500 to-purple-500 text-[11px] text-white font-medium hover:opacity-90 transition-opacity shadow-md shadow-cyan-500/25"
-                      >
-                        <MessageSquare className="h-3.5 w-3.5" />
-                        <span>Analyze with Speedy AI</span>
-                      </button>
+                            <button
+                              onClick={() => setShowChat(true)}
+                              className="relative group px-6 py-2.5 rounded-full bg-zinc-950 border border-white/10 text-[11px] font-bold text-white transition-all duration-500 hover:scale-[1.02] active:scale-[0.98] overflow-hidden shadow-[0_0_20px_rgba(34,211,238,0.05)] hover:shadow-[0_0_30px_rgba(34,211,238,0.25)] hover:border-cyan-500/50"
+                            >
+                              {/* Futuristic Scanner Effect */}
+                              <div className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full group-hover:animate-shimmer" />
+                              
+                              <div className="relative flex items-center gap-2 tracking-tight">
+                                <div className="relative">
+                                  <Sparkles className="h-3.5 w-3.5 text-cyan-400 group-hover:scale-110 transition-transform duration-500" />
+                                  <div className="absolute inset-0 h-3.5 w-3.5 bg-cyan-400 blur-[8px] opacity-0 group-hover:opacity-50 transition-opacity duration-500" />
+                                </div>
+                                <span className="bg-clip-text text-transparent bg-gradient-to-b from-white to-zinc-400 group-hover:from-white group-hover:to-white transition-colors">
+                                  Analyze with Speedy AI
+                                </span>
+                              </div>
+                            </button>
                     </div>
                   </div>
 
@@ -790,11 +868,15 @@ export default function AnnouncementsPage() {
                     setShowChat(true)
                   }}
                   quote={quote ? {
-                    currentPrice: quote.price,
-                    previousClose: quote.previousClose,
-                    change: quote.change,
-                    changePercent: quote.changePercent
-                  } : undefined}
+                      currentPrice: quote.price,
+                      previousClose: quote.previousClose,
+                      change: quote.change,
+                      changePercent: quote.changePercent,
+                      priceAtAnnouncement: priceAtAnnouncement,
+                      alphaSinceAnnouncement: priceAtAnnouncement && quote.price 
+                        ? ((quote.price - priceAtAnnouncement) / priceAtAnnouncement) * 100 
+                        : null
+                    } : undefined}
                 />
 
                 {/* Tags */}
@@ -935,47 +1017,56 @@ export default function AnnouncementsPage() {
                     </span>
                   </summary>
                     <div className="px-4 pb-4">
-                      {/* Price at Announcement vs Current */}
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div className="bg-white/5 rounded-xl p-3">
-                          <div className="text-[10px] text-zinc-500 mb-1">At Announcement</div>
-                          <div className="text-xl font-bold text-white tabular-nums">
-                            {/* Price snapshot not available without historical API */}
-                            —
+                        {/* Price at Announcement vs Current */}
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div className="bg-white/5 rounded-xl p-3">
+                            <div className="text-[10px] text-zinc-500 mb-1">Price at News</div>
+                            <div className="text-xl font-bold text-white tabular-nums">
+                              {priceAtAnnouncement 
+                                ? `₹${priceAtAnnouncement.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                                : "—"
+                              }
+                            </div>
+                            <div className="text-[10px] text-cyan-400 mt-1">
+                              {(() => {
+                                const annDate = new Date(selected.time)
+                                const isPostMarket = annDate.getHours() >= 15 || annDate.getHours() < 9
+                                return isPostMarket ? "Post Market Announcement" : "During Market Hours"
+                              })()}
+                            </div>
                           </div>
-                          <div className="text-[10px] text-cyan-400 mt-1">
-                            {(() => {
-                              const annDate = new Date(selected.time)
-                              const isPostMarket = annDate.getHours() >= 15 || annDate.getHours() < 9
-                              return isPostMarket ? "Announcement Came Post Market Close" : "During Market Hours"
-                            })()}
+                          <div className="bg-white/5 rounded-xl p-3">
+                            <div className="text-[10px] text-zinc-500 mb-1">Alpha Since News</div>
+                            {priceAtAnnouncement && quote?.price ? (
+                              <>
+                                {(() => {
+                                  const alpha = ((quote.price - priceAtAnnouncement) / priceAtAnnouncement) * 100
+                                  return (
+                                    <>
+                                      <div className={clsx(
+                                        "text-xl font-bold tabular-nums flex items-center gap-2",
+                                        alpha >= 0 ? "text-emerald-400" : "text-rose-400"
+                                      )}>
+                                        {alpha >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
+                                        {alpha >= 0 ? "+" : ""}{alpha.toFixed(2)}%
+                                      </div>
+                                      <div className="flex items-center gap-2 mt-1">
+                                        <span className={clsx(
+                                          "px-1.5 py-0.5 rounded text-[9px] font-semibold",
+                                          alpha >= 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
+                                        )}>
+                                          {alpha >= 5 ? "Strong Gain" : alpha >= 0 ? "Positive" : alpha <= -5 ? "Strong Loss" : "Negative"}
+                                        </span>
+                                      </div>
+                                    </>
+                                  )
+                                })()}
+                              </>
+                            ) : (
+                              <div className="text-xl font-bold text-zinc-500">—</div>
+                            )}
                           </div>
                         </div>
-                        <div className="bg-white/5 rounded-xl p-3">
-                          <div className="text-[10px] text-zinc-500 mb-1">Intraday Change</div>
-                          {typeof quote?.changePercent === 'number' ? (
-                            <>
-                              <div className={clsx(
-                                "text-xl font-bold tabular-nums flex items-center gap-2",
-                                quote.changePercent >= 0 ? "text-emerald-400" : "text-rose-400"
-                              )}>
-                                {quote.changePercent >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-                                {quote.changePercent >= 0 ? "+" : ""}{quote.changePercent.toFixed(2)}%
-                              </div>
-                              <div className="flex items-center gap-2 mt-1">
-                                <span className={clsx(
-                                  "px-1.5 py-0.5 rounded text-[9px] font-semibold",
-                                  quote.changePercent >= 0 ? "bg-emerald-500/20 text-emerald-400" : "bg-rose-500/20 text-rose-400"
-                                )}>
-                                  {quote.changePercent >= 0 ? "Positive" : "Negative"}
-                                </span>
-                              </div>
-                            </>
-                          ) : (
-                            <div className="text-xl font-bold text-zinc-500">—</div>
-                          )}
-                        </div>
-                      </div>
                       
                       {/* Day Stats */}
                       <div className="grid grid-cols-3 gap-3 mb-4">

@@ -623,14 +623,20 @@ const SYSTEM_PROMPT = `You are SpeedyPip AI, the world's most advanced financial
 Your mission:
 Provide hyper-precise, institutional-grade analysis of stocks, bulk deals, and corporate announcements.
 
-  Your Command Capabilities:
-  1. **Autonomous Intelligence**: You have tools to check LIVE Bulk Deals, Whale Timelines, Risk Radar, Wolf Pack signals, and LIVE Stock Quotes (LTP). Use them proactively.
-  2. **Chain-of-Thought**: Always explain your reasoning briefly. If you see a superstar entering a stock, link it to the "Whale Path" or "Discount Zone". 
-  3. **Deep Interpretation**: When you see whale activity, analyze the "Cost Basis vs Current Price". If the current price is below the Superstar's entry price, it's a "Golden Entry" or "Discount Zone".
-  4. **Institutional Tone**: Be concise, data-driven, and authoritative. Use "Apple-style" minimalism in your narrative—smooth, clean, and high-fidelity.
-    5. **Tool Mastery**: If a user asks about a stock price or LTP, use 'getStockQuote'. For deals, use 'getBulkDeals' and 'getWhaleTimeline'. If they ask about risks, use 'getRiskRadar'. If they ask for multi-investor signals, use 'getWolfPackAlerts'.
-    6. **Stacked Intelligence**: If a user asks a general question about a stock name directly with a question mark (e.g., 'Reliance?', 'Zomato?'), ALWAYS use 'getStockIntelligence' to provide the high-fidelity dashboard. This is your most powerful tool for summary overview.
+CRITICAL PDF ANALYSIS RULES:
+1. **PDF Content is Truth**: When PDF citations are provided, they contain the EXACT text from the document. Answer questions ONLY using this text.
+2. **Name Extraction**: When asked about names, people, allottees, shareholders, or directors - scan the PDF citations carefully for ALL names mentioned. List them exactly as written.
+3. **Table Data**: PDF text often contains table data with names, numbers, amounts. Extract ALL entries, not just summaries.
+4. **No Hallucination**: If a name/value is in the PDF citations, it MUST be in your answer. If it's not in the citations, say "Not found in the document".
+5. **Be Complete**: When listing names or entities from a table, list ALL of them found in the PDF text, not just a few.
 
+Your Command Capabilities:
+1. **Autonomous Intelligence**: You have tools to check LIVE Bulk Deals, Whale Timelines, Risk Radar, Wolf Pack signals, and LIVE Stock Quotes (LTP). Use them proactively.
+2. **Chain-of-Thought**: Always explain your reasoning briefly. If you see a superstar entering a stock, link it to the "Whale Path" or "Discount Zone". 
+3. **Deep Interpretation**: When you see whale activity, analyze the "Cost Basis vs Current Price". If the current price is below the Superstar's entry price, it's a "Golden Entry" or "Discount Zone".
+4. **Institutional Tone**: Be concise, data-driven, and authoritative. Use "Apple-style" minimalism in your narrative—smooth, clean, and high-fidelity.
+5. **Tool Mastery**: If a user asks about a stock price or LTP, use 'getStockQuote'. For deals, use 'getBulkDeals' and 'getWhaleTimeline'. If they ask about risks, use 'getRiskRadar'. If they ask for multi-investor signals, use 'getWolfPackAlerts'.
+6. **Stacked Intelligence**: If a user asks a general question about a stock name directly with a question mark (e.g., 'Reliance?', 'Zomato?'), ALWAYS use 'getStockIntelligence' to provide the high-fidelity dashboard. This is your most powerful tool for summary overview.
 
 Key Mental Models:
 - **Wolf Pack**: 3+ HNIs/Funds entering in 30 days is a Tier-1 signal. Coordinated entries suggest massive conviction.
@@ -706,6 +712,7 @@ ${announcement.summary ? `- Summary: ${announcement.summary}` : ""}${pdfContext}
     // RAG: If PDF available, index and retrieve top chunks as citations
     let ragCitations = ""
     const citationItems: { page: number; snippet: string; openUrl: string; score?: number }[] = []
+    let fullPdfText = ""
     if (openaiKey && announcement.pdfUrl) {
       try {
         const pages = await extractPdfPages(announcement.pdfUrl)
@@ -714,16 +721,22 @@ ${announcement.summary ? `- Summary: ${announcement.summary}` : ""}${pdfContext}
           buybackFacts = extractBuybackFacts(pages)
           capacityFacts = extractCapacityFacts(pages)
           resultsFacts = extractResultsFacts(pages)
+          
+          // Store full PDF text for name searches
+          fullPdfText = pages.map(p => p.text).join("\n\n")
 
           await ensureIndexed(announcement.pdfUrl, pages, openaiKey)
           const [qEmb] = await embedTexts(openaiKey, [message])
-          const hits = await topK(announcement.pdfUrl, qEmb, 3)
+          
+          // Increase topK for better coverage - get more relevant chunks
+          const hits = await topK(announcement.pdfUrl, qEmb, 6)
           if (hits.length > 0) {
-            ragCitations = `\n\nCITATIONS FROM PDF (relevant snippets):\n${hits.map((h, i) => `${i+1}. [p.${h.page}] ${h.text.slice(0, 220)}... (open: ${announcement.pdfUrl}#page=${h.page})`).join("\n")}`
+            // Include more text per citation (500 chars instead of 220)
+            ragCitations = `\n\nCITATIONS FROM PDF (relevant snippets - IMPORTANT: These contain the actual document text):\n${hits.map((h, i) => `${i+1}. [Page ${h.page}] ${h.text.slice(0, 500)}${h.text.length > 500 ? '...' : ''}`).join("\n\n")}`
             for (const h of hits) {
               citationItems.push({
                 page: h.page,
-                snippet: h.text.slice(0, 220),
+                snippet: h.text.slice(0, 500),
                 openUrl: `${announcement.pdfUrl}#page=${h.page}`,
                 score: h.score,
               })
@@ -735,6 +748,14 @@ ${announcement.summary ? `- Summary: ${announcement.summary}` : ""}${pdfContext}
       }
     }
     if (ragCitations) announcementContext += ragCitations
+    
+    // For name-related queries, include more PDF content directly
+    const isNameQuery = /who|name|allott|director|shareholder|investor|person|vineet|list.*all/i.test(message)
+    if (isNameQuery && fullPdfText && fullPdfText.length > 0) {
+      // Add first 8000 chars of PDF for comprehensive name coverage
+      const pdfExcerpt = fullPdfText.slice(0, 8000)
+      announcementContext += `\n\nFULL PDF EXCERPT (for comprehensive name search):\n${pdfExcerpt}`
+    }
 
     // If we have neither useful announcement text nor any PDF citations, do not call OpenAI
     const hasAnnouncementText = Boolean(announcement.headline || announcement.summary)

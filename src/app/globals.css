@@ -249,6 +249,16 @@ details[open] > summary {
   animation: chat-fade-in 0.3s ease-out;
 }
 
+/* Futuristic Animations */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite linear;
+}
+
 /* Typing indicator animation */
 @keyframes typing-bounce {
   0%, 60%, 100% {

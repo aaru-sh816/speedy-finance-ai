@@ -74,6 +74,22 @@ export class BSEClient {
     this.cache = new Map()
   }
 
+  private async fetchWithTimeout(url: string, options: RequestInit = {}, timeout = 10000): Promise<Response> {
+    const controller = new AbortController()
+    const id = setTimeout(() => controller.abort(), timeout)
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      })
+      clearTimeout(id)
+      return response
+    } catch (error) {
+      clearTimeout(id)
+      throw error
+    }
+  }
+
   private getCacheKey(endpoint: string): string {
     return endpoint
   }
@@ -92,11 +108,11 @@ export class BSEClient {
 
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseURL}/health`)
+      const response = await this.fetchWithTimeout(`${this.baseURL}/health`, {}, 2000)
       const data = await response.json()
       return data.status === 'healthy'
     } catch (error) {
-      console.error('BSE Service health check failed:', error)
+      // console.debug('BSE Service health check failed:', error)
       return false
     }
   }
@@ -109,7 +125,17 @@ export class BSEClient {
       return cached
     }
 
-    const response = await fetch(`${this.baseURL}/api/quote/${scripCode}`)
+    const response = await this.fetchWithTimeout(`${this.baseURL}/api/quote/${scripCode}`)
+    if (!response.ok) {
+      throw new Error(`BSE service returned ${response.status}`)
+    }
+    
+    // Check if response is JSON
+    const contentType = response.headers.get('content-type') || ''
+    if (!contentType.includes('application/json')) {
+      throw new Error(`BSE service returned non-JSON response: ${contentType}`)
+    }
+
     const result = await response.json()
 
     if (!result.success) {
@@ -128,7 +154,7 @@ export class BSEClient {
       return cached
     }
 
-    const response = await fetch(`${this.baseURL}/api/gainers`)
+    const response = await this.fetchWithTimeout(`${this.baseURL}/api/gainers`)
     const result = await response.json()
 
     if (!result.success) {
@@ -147,7 +173,7 @@ export class BSEClient {
       return cached
     }
 
-    const response = await fetch(`${this.baseURL}/api/losers`)
+    const response = await this.fetchWithTimeout(`${this.baseURL}/api/losers`)
     const result = await response.json()
 
     if (!result.success) {
@@ -166,7 +192,7 @@ export class BSEClient {
       return cached
     }
 
-    const response = await fetch(`${this.baseURL}/api/indices?category=${encodeURIComponent(category)}`)
+    const response = await this.fetchWithTimeout(`${this.baseURL}/api/indices?category=${encodeURIComponent(category)}`)
     const result = await response.json()
 
     if (!result.success) {
@@ -178,7 +204,7 @@ export class BSEClient {
   }
 
   async verifyScripCode(code: string): Promise<{ valid: boolean; companyName?: string }> {
-    const response = await fetch(`${this.baseURL}/api/verify-scrip/${code}`)
+    const response = await this.fetchWithTimeout(`${this.baseURL}/api/verify-scrip/${code}`)
     const result = await response.json()
 
     if (!result.success) {
@@ -199,7 +225,7 @@ export class BSEClient {
       return cached
     }
 
-    const response = await fetch(`${this.baseURL}/api/bhav-copy?date=${date}`)
+    const response = await this.fetchWithTimeout(`${this.baseURL}/api/bhav-copy?date=${date}`, {}, 10000)
     const result = await response.json()
 
     if (!result.success) {

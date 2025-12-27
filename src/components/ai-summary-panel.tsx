@@ -18,6 +18,8 @@ interface Quote {
   previousClose?: number | null
   change?: number | null
   changePercent?: number | null
+  priceAtAnnouncement?: number | null
+  alphaSinceAnnouncement?: number | null
 }
 
 interface AISummaryPanelProps {
@@ -400,12 +402,23 @@ export function AISummaryPanel({
           </h4>
           <div className="flex items-center gap-2">
             {/* Gap Up Alert */}
-            {quote?.previousClose && quote.currentPrice && quote.currentPrice > quote.previousClose && (
-              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-medium text-emerald-400">
-                <span>↑ Gap Up</span>
-                <span>+{((quote.currentPrice - quote.previousClose) / quote.previousClose * 100).toFixed(1)}%</span>
-              </div>
-            )}
+              {quote?.previousClose && quote.currentPrice && quote.currentPrice > quote.previousClose && (
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-medium text-emerald-400">
+                  <span>↑ Gap Up</span>
+                  <span>+{((quote.currentPrice - quote.previousClose) / quote.previousClose * 100).toFixed(1)}%</span>
+                </div>
+              )}
+              {/* Price at Announcement Alpha */}
+              {quote?.priceAtAnnouncement && quote?.alphaSinceAnnouncement != null && (
+                <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg border text-[10px] font-medium ${
+                  quote.alphaSinceAnnouncement >= 0 
+                    ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400" 
+                    : "bg-rose-500/15 border-rose-500/30 text-rose-400"
+                }`}>
+                  <span>Since News:</span>
+                  <span>{quote.alphaSinceAnnouncement >= 0 ? '+' : ''}{quote.alphaSinceAnnouncement.toFixed(1)}%</span>
+                </div>
+              )}
             {pdfUsed && (
               <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 text-[10px] font-medium">
                 Based on PDF

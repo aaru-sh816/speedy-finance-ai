@@ -120,15 +120,23 @@ export async function fetchBSEAnnouncements(options?: {
 
   const url = `${BSE_API_URL}?${params.toString()}`
 
-  try {
-    const res = await fetchWithRetry(url, { method: "GET", cache: "no-store" })
-    
-    if (!res.ok) {
-      metrics().recordError(`BSE_HTTP_${res.status}`)
-      return { announcements: [], totalCount: 0 }
-    }
+    try {
+      const res = await fetchWithRetry(url, { method: "GET", cache: "no-store" })
+      
+      if (!res.ok) {
+        metrics().recordError(`BSE_HTTP_${res.status}`)
+        return { announcements: [], totalCount: 0 }
+      }
 
-    const data: BSEAnnouncementsResponse = await res.json()
+      // Check content type
+      const contentType = res.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        // console.debug(`[BSE] Non-JSON response: ${contentType}`)
+        return { announcements: [], totalCount: 0 }
+      }
+
+      const data: BSEAnnouncementsResponse = await res.json()
+
     const rawAnnouncements = data.Table || []
     const totalCount = data.Table1?.[0]?.ROWCNT || rawAnnouncements.length
 
@@ -138,7 +146,7 @@ export async function fetchBSEAnnouncements(options?: {
       .filter(ann => {
         // Apply blacklist filter (like news.py)
         if (isBlacklisted(ann.headline)) {
-          console.log(`[BSE] Filtered blacklisted: ${ann.headline.substring(0, 50)}`)
+          // console.debug(`[BSE] Filtered blacklisted: ${ann.headline.substring(0, 50)}`)
           return false
         }
         return true

@@ -19,6 +19,8 @@ type Deal = {
   price: number | null
   type: string
   exchange: string
+  ltp?: number | null
+  alpha?: number | null
 }
 
 const CACHE_KEY = "speedy_bulk_deals_cache"
@@ -93,8 +95,9 @@ export default function BulkDealsPage() {
   const [apiMeta, setApiMeta] = useState<{ sources?: { nse: number; bse: number }; bseServiceAvailable?: boolean } | null>(null)
   const [page, setPage] = useState(1)
   const [perPage] = useState(50)
-  const [sortField, setSortField] = useState<"date" | "value" | "company" | "person">("date")
+  const [sortField, setSortField] = useState<"date" | "value" | "company" | "person" | "alpha" | "ltp">("date")
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc")
+  const [ltpCache, setLtpCache] = useState<Map<string, { ltp: number; timestamp: number }>>(new Map())
   const [cacheMeta, setCacheMeta] = useState<{ lastUpdated: string; count: number } | null>(null)
   const [useCache, setUseCache] = useState(true)
   const [fetchingToday, setFetchingToday] = useState(false)
@@ -135,6 +138,8 @@ export default function BulkDealsPage() {
   useEffect(() => {
     setCacheMeta(getCacheMeta())
   }, [])
+
+
 
   const formatDateLocal = (d: Date) => {
     const year = d.getFullYear()
@@ -407,7 +412,66 @@ export default function BulkDealsPage() {
     return filtered.slice(start, start + perPage)
   }, [filtered, page, perPage])
   
+  // Fetch LTP for visible deals
+  useEffect(() => {
+    const fetchLtps = async () => {
+      const uniqueScripCodes = [...new Set(paginated.map(d => d.scripCode).filter(Boolean))]
+      const now = Date.now()
+      const LTP_CACHE_TTL = 60000 // 1 minute cache
+      
+      const needsUpdate = uniqueScripCodes.filter(code => {
+        const cached = ltpCache.get(code)
+        return !cached || (now - cached.timestamp) > LTP_CACHE_TTL
+      })
+      
+      if (needsUpdate.length === 0) return
+      
+      // Batch fetch LTPs (max 10 at a time)
+      for (let i = 0; i < Math.min(needsUpdate.length, 10); i++) {
+        const code = needsUpdate[i]
+        try {
+          const res = await fetch(`/api/bse/quote?symbol=${encodeURIComponent(code)}`, { cache: 'no-store' })
+          if (res.ok) {
+            const data = await res.json()
+            if (data.price != null) {
+              setLtpCache(prev => {
+                const newMap = new Map(prev)
+                newMap.set(code, { ltp: data.price, timestamp: now })
+                return newMap
+              })
+            }
+          }
+        } catch {}
+      }
+    }
+    
+    if (paginated.length > 0) {
+      fetchLtps()
+    }
+  }, [paginated])
+  
   const totalPages = Math.ceil(filtered.length / perPage)
+
+  // Helper to get LTP and calculate Alpha
+  const getDealWithLtp = useCallback((d: Deal) => {
+    const cached = ltpCache.get(d.scripCode)
+    const ltp = cached?.ltp ?? null
+    let alpha = null
+    if (ltp != null && d.price != null && d.price > 0) {
+      alpha = ((ltp - d.price) / d.price) * 100
+    }
+    return { ...d, ltp, alpha }
+  }, [ltpCache])
+
+  // Column sort handler
+  const handleSort = useCallback((field: typeof sortField) => {
+    if (sortField === field) {
+      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDir('desc')
+    }
+  }, [sortField])
 
   const years = useMemo(() => {
     const y: number[] = []
@@ -681,113 +745,192 @@ export default function BulkDealsPage() {
         </div>
 
         {/* Table */}
-        <div className="bg-zinc-900/50 border border-white/10 rounded-2xl overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-zinc-800/50 border-b border-white/5">
-                  <th className="text-left py-4 px-6 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Company</th>
-                  <th className="text-left py-4 px-6 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Person</th>
-                  <th className="text-left py-4 px-6 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Date</th>
-                  <th className="text-left py-4 px-6 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Type</th>
-                  <th className="text-right py-4 px-6 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Value</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {loading ? (
-                  <tr>
-                    <td colSpan={5} className="py-20 text-center text-zinc-500">
-                      <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />
-                      <div>Loading deals...</div>
-                    </td>
-                  </tr>
-                ) : paginated.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-20 text-center">
-                      <div className="text-zinc-400 mb-2">No bulk deals found for selected date range</div>
-                      <div className="text-xs text-zinc-600 max-w-md mx-auto">
-                        NSE provides bulk/block deals for the last 2-3 trading days only. 
-                        Try selecting "Today" or "Last 7 Days" to see recent deals.
+          <div className="bg-zinc-900/50 border border-white/10 rounded-2xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-zinc-800/50 border-b border-white/5">
+                    <th 
+                      onClick={() => handleSort('company')}
+                      className="text-left py-4 px-6 text-xs font-semibold text-zinc-400 uppercase tracking-wider cursor-pointer hover:text-white transition-colors select-none"
+                    >
+                      <div className="flex items-center gap-1">
+                        Company
+                        {sortField === 'company' && <span className="text-cyan-400">{sortDir === 'asc' ? '↑' : '↓'}</span>}
                       </div>
-                    </td>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('person')}
+                      className="text-left py-4 px-6 text-xs font-semibold text-zinc-400 uppercase tracking-wider cursor-pointer hover:text-white transition-colors select-none"
+                    >
+                      <div className="flex items-center gap-1">
+                        Person
+                        {sortField === 'person' && <span className="text-cyan-400">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('date')}
+                      className="text-left py-4 px-6 text-xs font-semibold text-zinc-400 uppercase tracking-wider cursor-pointer hover:text-white transition-colors select-none"
+                    >
+                      <div className="flex items-center gap-1">
+                        Date
+                        {sortField === 'date' && <span className="text-cyan-400">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                      </div>
+                    </th>
+                    <th className="text-left py-4 px-6 text-xs font-semibold text-zinc-400 uppercase tracking-wider">Type</th>
+                    <th 
+                      onClick={() => handleSort('value')}
+                      className="text-right py-4 px-6 text-xs font-semibold text-zinc-400 uppercase tracking-wider cursor-pointer hover:text-white transition-colors select-none"
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        Value
+                        {sortField === 'value' && <span className="text-cyan-400">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('ltp')}
+                      className="text-right py-4 px-6 text-xs font-semibold text-zinc-400 uppercase tracking-wider cursor-pointer hover:text-white transition-colors select-none"
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        LTP
+                        {sortField === 'ltp' && <span className="text-cyan-400">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                      </div>
+                    </th>
+                    <th 
+                      onClick={() => handleSort('alpha')}
+                      className="text-right py-4 px-6 text-xs font-semibold text-zinc-400 uppercase tracking-wider cursor-pointer hover:text-white transition-colors select-none"
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        Alpha %
+                        {sortField === 'alpha' && <span className="text-cyan-400">{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                      </div>
+                    </th>
                   </tr>
-                ) : paginated.map((d, i) => {
-                  const value = (d.quantity ?? 0) * (d.price ?? 0)
-                  const dObj = new Date(d.date)
-                  const dateStr = isNaN(dObj.getTime()) ? d.date : dObj.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
-                  const bseLink = `https://www.bseindia.com/stock-share-price/x/${encodeURIComponent((d.securityName||'').toLowerCase().replace(/\s+/g,'-'))}/${d.scripCode}/`
-                  return (
-                    <tr key={i} className={clsx(
-                      "hover:bg-white/5 transition-colors",
-                      value >= 1e8 && "bg-gradient-to-r from-amber-500/5 to-transparent"
-                    )}>
-                      <td className="py-4 px-6">
-                        <div className="flex items-center gap-3">
-                          <div>
-                            <Link 
-                              href={`/bulk-deals/company/${encodeURIComponent(d.scripCode || d.securityName)}`}
-                              className="text-white font-medium hover:text-cyan-400 transition-colors flex items-center gap-1 group"
-                            >
-                              <span className="group-hover:underline">{d.securityName}</span>
-                              <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                            </Link>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-xs text-zinc-500">{d.scripCode}</span>
-                              <span className={clsx(
-                                "text-[10px] px-1.5 py-0.5 rounded font-medium",
-                                d.exchange === "BSE" 
-                                  ? "bg-orange-500/20 text-orange-400" 
-                                  : "bg-blue-500/20 text-blue-400"
-                              )}>
-                                {d.exchange}
-                              </span>
-                              {value >= 1e8 && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/20 text-amber-400 flex items-center gap-0.5">
-                                  🔥 BIG
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {loading ? (
+                    <tr>
+                      <td colSpan={7} className="py-20 text-center text-zinc-500">
+                        <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />
+                        <div>Loading deals...</div>
                       </td>
-                      <td className="py-4 px-6">
-                        <Link 
-                          href={`/bulk-deals/person/${encodeURIComponent(d.clientName)}`}
-                          className="text-sm text-zinc-300 hover:text-cyan-400 transition-colors flex items-center gap-1 group"
-                        >
-                          <span className="group-hover:underline">{d.clientName}</span>
-                          <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </Link>
-                      </td>
-                      <td className="py-4 px-6 text-sm text-zinc-400">{dateStr}</td>
-                      <td className="py-4 px-6">
-                        <span className={clsx(
-                          "inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold",
-                          d.side === "BUY" 
-                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
-                            : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                        )}>
-                          {d.side === "BUY" ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                          {d.side}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 text-right">
-                        <div className={clsx(
-                          "font-bold text-sm",
-                          d.side === "BUY" ? "text-emerald-400" : "text-rose-400"
-                        )}>
-                          ₹{rupeeCompact(value)}
-                        </div>
-                        <div className="text-xs text-zinc-500 mt-0.5">
-                          {(d.quantity??0).toLocaleString()} × ₹{(d.price??0).toFixed(2)}
+                    </tr>
+                  ) : paginated.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-20 text-center">
+                        <div className="text-zinc-400 mb-2">No bulk deals found for selected date range</div>
+                        <div className="text-xs text-zinc-600 max-w-md mx-auto">
+                          NSE provides bulk/block deals for the last 2-3 trading days only. 
+                          Try selecting "Today" or "Last 7 Days" to see recent deals.
                         </div>
                       </td>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                  ) : paginated.map((d, i) => {
+                    const dealWithLtp = getDealWithLtp(d)
+                    const value = (d.quantity ?? 0) * (d.price ?? 0)
+                    const dObj = new Date(d.date)
+                    const dateStr = isNaN(dObj.getTime()) ? d.date : dObj.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+                    const bseLink = `https://www.bseindia.com/stock-share-price/x/${encodeURIComponent((d.securityName||'').toLowerCase().replace(/\s+/g,'-'))}/${d.scripCode}/`
+                    return (
+                      <tr key={i} className={clsx(
+                        "hover:bg-white/5 transition-colors",
+                        value >= 1e8 && "bg-gradient-to-r from-amber-500/5 to-transparent"
+                      )}>
+                        <td className="py-4 px-6">
+                          <div className="flex items-center gap-3">
+                            <div>
+                              <Link 
+                                href={`/bulk-deals/company/${encodeURIComponent(d.scripCode || d.securityName)}`}
+                                className="text-white font-medium hover:text-cyan-400 transition-colors flex items-center gap-1 group"
+                              >
+                                <span className="group-hover:underline">{d.securityName}</span>
+                                <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </Link>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-xs text-zinc-500">{d.scripCode}</span>
+                                <span className={clsx(
+                                  "text-[10px] px-1.5 py-0.5 rounded font-medium",
+                                  d.exchange === "BSE" 
+                                    ? "bg-orange-500/20 text-orange-400" 
+                                    : "bg-blue-500/20 text-blue-400"
+                                )}>
+                                  {d.exchange}
+                                </span>
+                                {value >= 1e8 && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/20 text-amber-400 flex items-center gap-0.5">
+                                    🔥 BIG
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-4 px-6">
+                          <Link 
+                            href={`/bulk-deals/person/${encodeURIComponent(d.clientName)}`}
+                            className="text-sm text-zinc-300 hover:text-cyan-400 transition-colors flex items-center gap-1 group"
+                          >
+                            <span className="group-hover:underline">{d.clientName}</span>
+                            <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </Link>
+                        </td>
+                        <td className="py-4 px-6 text-sm text-zinc-400">{dateStr}</td>
+                        <td className="py-4 px-6">
+                          <span className={clsx(
+                            "inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold",
+                            d.side === "BUY" 
+                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                              : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                          )}>
+                            {d.side === "BUY" ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                            {d.side}
+                          </span>
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          <div className={clsx(
+                            "font-bold text-sm",
+                            d.side === "BUY" ? "text-emerald-400" : "text-rose-400"
+                          )}>
+                            ₹{rupeeCompact(value)}
+                          </div>
+                          <div className="text-xs text-zinc-500 mt-0.5">
+                            {(d.quantity??0).toLocaleString()} × ₹{(d.price??0).toFixed(2)}
+                          </div>
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          {dealWithLtp.ltp != null ? (
+                            <div className="font-semibold text-sm text-cyan-400 tabular-nums">
+                              ₹{dealWithLtp.ltp.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-zinc-600">—</div>
+                          )}
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          {dealWithLtp.alpha != null ? (
+                            <div className={clsx(
+                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-xs font-bold tabular-nums",
+                              dealWithLtp.alpha >= 0 
+                                ? "bg-emerald-500/15 text-emerald-400" 
+                                : "bg-rose-500/15 text-rose-400"
+                            )}>
+                              {dealWithLtp.alpha >= 0 ? (
+                                <TrendingUp className="h-3 w-3" />
+                              ) : (
+                                <TrendingDown className="h-3 w-3" />
+                              )}
+                              {dealWithLtp.alpha >= 0 ? '+' : ''}{dealWithLtp.alpha.toFixed(1)}%
+                            </div>
+                          ) : (
+                            <div className="text-xs text-zinc-600">—</div>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
 
           {/* Pagination */}
           {totalPages > 1 && (

@@ -142,16 +142,17 @@ export async function GET(request: Request) {
     }
 
     const url = `${BSE_ACTIONS_URL}?${params.toString()}`
-    console.log(`[Corporate Actions] Fetching: ${url}`)
+    // console.debug(`[Corporate Actions] Fetching: ${url}`)
 
     const response = await fetch(url, {
       method: "GET",
       headers: HEADERS,
       cache: "no-store",
+      signal: AbortSignal.timeout(5000),
     })
 
     if (!response.ok) {
-      console.error(`[Corporate Actions] BSE API error: ${response.status}`)
+      // console.debug(`[Corporate Actions] BSE API error: ${response.status}`)
       if (!allowMock) {
         return NextResponse.json({
           actions: [],
@@ -173,15 +174,35 @@ export async function GET(request: Request) {
       })
     }
 
-    const data = await response.json()
-    let actions = parseCorporateActions(data)
+      const contentType = response.headers.get('content-type') || ''
+      if (!contentType.includes('application/json')) {
+        // console.debug(`[Corporate Actions] BSE API returned non-JSON: ${contentType}`)
+        if (!allowMock) {
+          return NextResponse.json({
+            actions: [],
+            count: 0,
+            error: `BSE API returned non-JSON response`,
+            purposeCodes: PURPOSE_CODES,
+            meta: { fetchedAt: new Date().toISOString(), source: "bse" }
+          })
+        }
+        return NextResponse.json({
+          actions: getMockActions(),
+          count: 5,
+          purposeCodes: PURPOSE_CODES,
+          meta: { fetchedAt: new Date().toISOString(), source: "mock" }
+        })
+      }
+      
+      const data = await response.json()
+      let actions = parseCorporateActions(data)
     
     // Filter by purpose type if specified
     if (purposeType) {
       actions = actions.filter(a => a.purposeType === purposeType)
     }
     
-    console.log(`[Corporate Actions] Found ${actions.length} actions`)
+    // console.debug(`[Corporate Actions] Found ${actions.length} actions`)
 
     // If no actions from API
     if (actions.length === 0) {

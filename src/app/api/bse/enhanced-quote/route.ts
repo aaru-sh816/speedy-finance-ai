@@ -32,7 +32,11 @@ export async function GET(request: NextRequest) {
       timestamp: new Date().toISOString()
     })
   } catch (error: any) {
-    console.error(`Enhanced quote API error for ${scripCode}:`, error)
+    if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+      console.warn(`Enhanced quote API timeout for ${scripCode}`)
+      return NextResponse.json({ error: "Request timeout" }, { status: 504 })
+    }
+    console.error(`Enhanced quote API error for ${scripCode}:`, error.message || error)
     return NextResponse.json(
       { 
         error: "Failed to fetch enhanced quote",

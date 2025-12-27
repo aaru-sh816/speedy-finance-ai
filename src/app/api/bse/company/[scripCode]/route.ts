@@ -102,30 +102,31 @@ async function fetchCompanyInfo(scripCode: string) {
     // BSE API for company header info
     const url = `https://api.bseindia.com/BseIndiaAPI/api/ComHeadernew/w?scripcode=${scripCode}`
     
-    console.log(`[Company Info] Fetching info for scripCode: ${scripCode}`)
+    // console.log(`[Company Info] Fetching info for scripCode: ${scripCode}`)
     
     const response = await fetch(url, {
       method: "GET",
       headers: HEADERS,
       cache: "no-store",
+      signal: AbortSignal.timeout(5000),
     })
     
     if (!response.ok) {
-      console.error(`[Company Info] API error: ${response.status}`)
+      // console.debug(`[Company Info] API error: ${response.status}`)
       return null
     }
     
     // Check content type to avoid parsing HTML as JSON
     const contentType = response.headers.get('content-type') || ''
     if (!contentType.includes('application/json')) {
-      console.warn(`[Company Info] Non-JSON response (${contentType}), skipping BSE API`)
+      // console.debug(`[Company Info] Non-JSON response (${contentType}), skipping BSE API`)
       return null
     }
     
     // Get text first to check if it's valid JSON
     const text = await response.text()
     if (text.startsWith('<') || text.startsWith('<!')) {
-      console.warn(`[Company Info] Got HTML instead of JSON, BSE may be blocking`)
+      // console.debug(`[Company Info] Got HTML instead of JSON, BSE may be blocking`)
       return null
     }
     
@@ -133,11 +134,11 @@ async function fetchCompanyInfo(scripCode: string) {
     try {
       data = JSON.parse(text)
     } catch {
-      console.error(`[Company Info] Invalid JSON response`)
+      // console.debug(`[Company Info] Invalid JSON response`)
       return null
     }
     
-    console.log(`[Company Info] Response:`, JSON.stringify(data).substring(0, 300))
+    // console.log(`[Company Info] Response:`, JSON.stringify(data).substring(0, 300))
     
     // Parse response - BSE returns different formats
     const header = data?.Header || data

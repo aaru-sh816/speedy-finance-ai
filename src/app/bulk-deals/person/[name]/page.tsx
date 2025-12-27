@@ -1,12 +1,13 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useCallback } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import { 
   ArrowUpRight, ArrowDownRight, TrendingUp, TrendingDown, 
   Building2, Calendar, Activity, ChevronLeft, ChevronRight,
-  ExternalLink, User, Briefcase, Target, Flame, Star
+  ExternalLink, User, Briefcase, Target, Flame, Star,
+  ArrowUp, ArrowDown, Trophy, Skull, Zap, Award, ChevronUp, ChevronDown
 } from "lucide-react"
 import clsx from "clsx"
 
@@ -20,6 +21,8 @@ type Deal = {
   price: number | null
   type: string
   exchange: string
+  ltp?: number | null
+  alpha?: number | null
 }
 
 type Stats = {
@@ -34,6 +37,26 @@ type Stats = {
   biggestDeal: Deal | null
   repeatBuys: { name: string; code: string; count: number; dates: string[] }[]
   accumulationPatterns: { name: string; code: string; buyCount: number; totalBought: number }[]
+}
+
+type SortKey = 'company' | 'date' | 'side' | 'quantity' | 'price' | 'value' | 'ltp' | 'alpha'
+type SortDir = 'asc' | 'desc'
+
+const ltpCache = new Map<string, { ltp: number | null; ts: number }>()
+const LTP_CACHE_TTL = 60000
+
+async function fetchQuoteLTP(scripCode: string): Promise<number | null> {
+  if (!scripCode) return null
+  const cached = ltpCache.get(scripCode)
+  if (cached && Date.now() - cached.ts < LTP_CACHE_TTL) return cached.ltp
+  try {
+    const res = await fetch(`/api/bse/quote?symbol=${encodeURIComponent(scripCode)}`)
+    if (!res.ok) return null
+    const data = await res.json()
+    const ltp = data.price || data.currentValue || data.ltp || data.lastPrice || null
+    ltpCache.set(scripCode, { ltp, ts: Date.now() })
+    return ltp
+  } catch { return null }
 }
 
 function rupeeCompact(value: number): string {
@@ -71,9 +94,13 @@ export default function PersonProfilePage() {
   const personName = decodeURIComponent(params.name as string)
   
   const [deals, setDeals] = useState<Deal[]>([])
+  const [ltpMap, setLtpMap] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [filter, setFilter] = useState<'all' | 'BUY' | 'SELL'>('all')
+  const [sortKey, setSortKey] = useState<SortKey>('date')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [ltpLoading, setLtpLoading] = useState(false)
   const perPage = 20
 
   useEffect(() => {
@@ -113,6 +140,66 @@ export default function PersonProfilePage() {
     
     if (personName) fetchDeals()
   }, [personName])
+
+  const [ltpFetched, setLtpFetched] = useState(false)
+  
+  useEffect(() => {
+    if (deals.length === 0 || ltpFetched) return
+    let cancelled = false
+    
+    async function fetchAllLTPs() {
+      const uniqueCodes = [...new Set(deals.map(d => d.scripCode).filter(Boolean))]
+      if (uniqueCodes.length === 0) {
+        setLtpLoading(false)
+        setLtpFetched(true)
+        return
+      }
+      
+      setLtpLoading(true)
+      const newLtpObj: Record<string, number> = {}
+      
+      try {
+        const batchSize = 5
+        for (let i = 0; i < uniqueCodes.length && !cancelled; i += batchSize) {
+          const batch = uniqueCodes.slice(i, i + batchSize)
+          const results = await Promise.allSettled(batch.map(async code => {
+            const ltp = await fetchQuoteLTP(code)
+            return { code, ltp }
+          }))
+          
+          results.forEach(result => {
+            if (result.status === 'fulfilled' && result.value.ltp !== null) {
+              newLtpObj[result.value.code] = result.value.ltp
+            }
+          })
+          
+          if (!cancelled && Object.keys(newLtpObj).length > 0) {
+            setLtpMap(prev => ({ ...prev, ...newLtpObj }))
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching LTPs:', err)
+      }
+      
+      if (!cancelled) {
+        setLtpLoading(false)
+        setLtpFetched(true)
+      }
+    }
+    
+    fetchAllLTPs()
+    return () => { cancelled = true }
+  }, [deals, ltpFetched])
+
+  const dealsWithLTP = useMemo(() => {
+    return deals.map(d => {
+      const ltp = ltpMap[d.scripCode] || null
+      const alpha = ltp && d.price 
+        ? (d.side === 'BUY' ? ((ltp - d.price) / d.price) * 100 : ((d.price - ltp) / d.price) * 100)
+        : null
+      return { ...d, ltp, alpha }
+    })
+  }, [deals, ltpMap])
 
   // Calculate stats
   const stats: Stats = useMemo(() => {
@@ -185,12 +272,66 @@ export default function PersonProfilePage() {
 
   // Filtered and paginated deals
   const filtered = useMemo(() => {
-    if (filter === 'all') return deals
-    return deals.filter(d => d.side === filter)
-  }, [deals, filter])
+    if (filter === 'all') return dealsWithLTP
+    return dealsWithLTP.filter(d => d.side === filter)
+  }, [dealsWithLTP, filter])
+
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      let cmp = 0
+      const aVal = (a.quantity || 0) * (a.price || 0)
+      const bVal = (b.quantity || 0) * (b.price || 0)
+      switch (sortKey) {
+        case 'company': cmp = (a.securityName || '').localeCompare(b.securityName || ''); break
+        case 'date': cmp = (a.date || '').localeCompare(b.date || ''); break
+        case 'side': cmp = (a.side || '').localeCompare(b.side || ''); break
+        case 'quantity': cmp = (a.quantity || 0) - (b.quantity || 0); break
+        case 'price': cmp = (a.price || 0) - (b.price || 0); break
+        case 'value': cmp = aVal - bVal; break
+        case 'ltp': cmp = (a.ltp || 0) - (b.ltp || 0); break
+        case 'alpha': cmp = (a.alpha || -999) - (b.alpha || -999); break
+        default: cmp = 0
+      }
+      return sortDir === 'desc' ? -cmp : cmp
+    })
+  }, [filtered, sortKey, sortDir])
   
-  const totalPages = Math.ceil(filtered.length / perPage)
-  const paginated = filtered.slice((page - 1) * perPage, page * perPage)
+  const totalPages = Math.ceil(sorted.length / perPage)
+  const paginated = sorted.slice((page - 1) * perPage, page * perPage)
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir('desc') }
+    setPage(1)
+  }
+
+  const SortHeader = ({ label, sortKeyName, align = 'left' }: { label: string; sortKeyName: SortKey; align?: 'left' | 'right' }) => (
+    <th 
+      className={clsx("py-3 px-6 text-xs font-semibold text-zinc-400 uppercase cursor-pointer hover:text-white transition-colors select-none", align === 'right' && "text-right")}
+      onClick={() => toggleSort(sortKeyName)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {sortKey === sortKeyName && (sortDir === 'asc' ? <ChevronUp className="h-3 w-3 text-cyan-400" /> : <ChevronDown className="h-3 w-3 text-cyan-400" />)}
+      </span>
+    </th>
+  )
+
+  const portfolioROI = useMemo(() => {
+    const buysWithAlpha = dealsWithLTP.filter(d => d.side === 'BUY' && d.alpha != null)
+    if (buysWithAlpha.length === 0) return null
+    const totalInvested = buysWithAlpha.reduce((sum, d) => sum + (d.quantity || 0) * (d.price || 0), 0)
+    const totalNow = buysWithAlpha.reduce((sum, d) => sum + (d.quantity || 0) * (d.ltp || d.price || 0), 0)
+    return totalInvested > 0 ? ((totalNow - totalInvested) / totalInvested) * 100 : null
+  }, [dealsWithLTP])
+
+  const bestBets = useMemo(() => {
+    return dealsWithLTP.filter(d => d.side === 'BUY' && d.alpha != null).sort((a, b) => (b.alpha || 0) - (a.alpha || 0)).slice(0, 3)
+  }, [dealsWithLTP])
+
+  const worstBets = useMemo(() => {
+    return dealsWithLTP.filter(d => d.side === 'BUY' && d.alpha != null).sort((a, b) => (a.alpha || 0) - (b.alpha || 0)).slice(0, 3)
+  }, [dealsWithLTP])
 
   const avatarGradient = generateAvatarGradient(personName)
 
@@ -247,53 +388,129 @@ export default function PersonProfilePage() {
           </button>
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="p-2 bg-emerald-500/20 rounded-xl">
-                <TrendingUp className="h-5 w-5 text-emerald-400" />
-              </div>
-              <span className="text-xs text-emerald-400 font-medium">{deals.filter(d => d.side === 'BUY').length} deals</span>
-            </div>
-            <div className="text-2xl font-bold text-emerald-400">₹{rupeeCompact(stats.totalBuyValue)}</div>
-            <div className="text-xs text-zinc-500 mt-1">Total Buy Value</div>
-          </div>
-
-          <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="p-2 bg-rose-500/20 rounded-xl">
-                <TrendingDown className="h-5 w-5 text-rose-400" />
-              </div>
-              <span className="text-xs text-rose-400 font-medium">{deals.filter(d => d.side === 'SELL').length} deals</span>
-            </div>
-            <div className="text-2xl font-bold text-rose-400">₹{rupeeCompact(stats.totalSellValue)}</div>
-            <div className="text-xs text-zinc-500 mt-1">Total Sell Value</div>
-          </div>
-
-          <div className="bg-zinc-800/50 border border-white/10 rounded-2xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="p-2 bg-white/10 rounded-xl">
-                <Building2 className="h-5 w-5 text-zinc-400" />
-              </div>
-            </div>
-            <div className="text-2xl font-bold">{stats.uniqueCompanies}</div>
-            <div className="text-xs text-zinc-500 mt-1">Unique Companies</div>
-          </div>
-
-          {stats.biggestDeal && (
-            <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-amber-500/20 rounded-2xl p-5">
+{/* Stats Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
+            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-5">
               <div className="flex items-center gap-3 mb-3">
-                <div className="p-2 bg-amber-500/20 rounded-xl">
-                  <Flame className="h-5 w-5 text-amber-400" />
+                <div className="p-2 bg-emerald-500/20 rounded-xl">
+                  <TrendingUp className="h-5 w-5 text-emerald-400" />
                 </div>
-                <span className="text-xs text-amber-400 font-medium">Biggest Deal</span>
+                <span className="text-xs text-emerald-400 font-medium">{deals.filter(d => d.side === 'BUY').length} deals</span>
               </div>
-              <div className="text-lg font-bold text-amber-400">₹{rupeeCompact((stats.biggestDeal.quantity || 0) * (stats.biggestDeal.price || 0))}</div>
-              <div className="text-xs text-zinc-500 mt-1 truncate">{stats.biggestDeal.securityName}</div>
+              <div className="text-2xl font-bold text-emerald-400">₹{rupeeCompact(stats.totalBuyValue)}</div>
+              <div className="text-xs text-zinc-500 mt-1">Total Buy Value</div>
+            </div>
+
+            <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="p-2 bg-rose-500/20 rounded-xl">
+                  <TrendingDown className="h-5 w-5 text-rose-400" />
+                </div>
+                <span className="text-xs text-rose-400 font-medium">{deals.filter(d => d.side === 'SELL').length} deals</span>
+              </div>
+              <div className="text-2xl font-bold text-rose-400">₹{rupeeCompact(stats.totalSellValue)}</div>
+              <div className="text-xs text-zinc-500 mt-1">Total Sell Value</div>
+            </div>
+
+            <div className="bg-zinc-800/50 border border-white/10 rounded-2xl p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="p-2 bg-white/10 rounded-xl">
+                  <Building2 className="h-5 w-5 text-zinc-400" />
+                </div>
+              </div>
+              <div className="text-2xl font-bold">{stats.uniqueCompanies}</div>
+              <div className="text-xs text-zinc-500 mt-1">Unique Companies</div>
+            </div>
+
+            {portfolioROI !== null && (
+              <div className={clsx(
+                "border rounded-2xl p-5",
+                portfolioROI >= 0 
+                  ? "bg-gradient-to-br from-emerald-500/10 to-cyan-500/10 border-emerald-500/20" 
+                  : "bg-gradient-to-br from-rose-500/10 to-orange-500/10 border-rose-500/20"
+              )}>
+                <div className="flex items-center gap-3 mb-3">
+                  <div className={clsx("p-2 rounded-xl", portfolioROI >= 0 ? "bg-emerald-500/20" : "bg-rose-500/20")}>
+                    <Zap className={clsx("h-5 w-5", portfolioROI >= 0 ? "text-emerald-400" : "text-rose-400")} />
+                  </div>
+                  <span className={clsx("text-xs font-medium", portfolioROI >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                    {ltpLoading ? "Calculating..." : "Portfolio ROI"}
+                  </span>
+                </div>
+                <div className={clsx("text-2xl font-bold", portfolioROI >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                  {portfolioROI >= 0 ? "+" : ""}{portfolioROI.toFixed(1)}%
+                </div>
+                <div className="text-xs text-zinc-500 mt-1">If held all buys to today</div>
+              </div>
+            )}
+
+            {stats.biggestDeal && (
+              <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-amber-500/20 rounded-2xl p-5">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="p-2 bg-amber-500/20 rounded-xl">
+                    <Flame className="h-5 w-5 text-amber-400" />
+                  </div>
+                  <span className="text-xs text-amber-400 font-medium">Biggest Deal</span>
+                </div>
+                <div className="text-lg font-bold text-amber-400">₹{rupeeCompact((stats.biggestDeal.quantity || 0) * (stats.biggestDeal.price || 0))}</div>
+                <div className="text-xs text-zinc-500 mt-1 truncate">{stats.biggestDeal.securityName}</div>
+              </div>
+            )}
+          </div>
+
+          {/* Best & Worst Bets */}
+          {(bestBets.length > 0 || worstBets.length > 0) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+              {bestBets.length > 0 && (
+                <div className="bg-gradient-to-br from-emerald-500/5 to-cyan-500/5 border border-emerald-500/20 rounded-2xl p-5">
+                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-2 text-emerald-400">
+                    <Trophy className="h-4 w-4" />
+                    Best Bets
+                    <span className="text-xs text-emerald-400/60 font-normal">(Highest Alpha)</span>
+                  </h3>
+                  <div className="space-y-2">
+                    {bestBets.map((d, i) => (
+                      <Link 
+                        key={i}
+                        href={`/bulk-deals/company/${encodeURIComponent(d.scripCode)}`}
+                        className="flex items-center justify-between bg-emerald-500/10 hover:bg-emerald-500/15 rounded-lg px-3 py-2 transition-colors"
+                      >
+                        <div>
+                          <span className="text-sm font-medium text-white">{d.securityName}</span>
+                          <div className="text-xs text-zinc-500">₹{d.price?.toFixed(2)} → ₹{d.ltp?.toFixed(2)}</div>
+                        </div>
+                        <span className="text-sm font-bold text-emerald-400">+{d.alpha?.toFixed(1)}%</span>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {worstBets.length > 0 && worstBets.some(d => (d.alpha || 0) < 0) && (
+                <div className="bg-gradient-to-br from-rose-500/5 to-orange-500/5 border border-rose-500/20 rounded-2xl p-5">
+                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-2 text-rose-400">
+                    <Skull className="h-4 w-4" />
+                    Worst Bets
+                    <span className="text-xs text-rose-400/60 font-normal">(Lowest Alpha)</span>
+                  </h3>
+                  <div className="space-y-2">
+                    {worstBets.filter(d => (d.alpha || 0) < 0).map((d, i) => (
+                      <Link 
+                        key={i}
+                        href={`/bulk-deals/company/${encodeURIComponent(d.scripCode)}`}
+                        className="flex items-center justify-between bg-rose-500/10 hover:bg-rose-500/15 rounded-lg px-3 py-2 transition-colors"
+                      >
+                        <div>
+                          <span className="text-sm font-medium text-white">{d.securityName}</span>
+                          <div className="text-xs text-zinc-500">₹{d.price?.toFixed(2)} → ₹{d.ltp?.toFixed(2)}</div>
+                        </div>
+                        <span className="text-sm font-bold text-rose-400">{d.alpha?.toFixed(1)}%</span>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
-        </div>
 
         {/* Accumulation Patterns - Stocks being accumulated */}
         {stats.accumulationPatterns.length > 0 && (
@@ -388,105 +605,134 @@ export default function PersonProfilePage() {
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-zinc-800/50 border-b border-white/5">
-                  <th className="text-left py-3 px-6 text-xs font-semibold text-zinc-400 uppercase">Company</th>
-                  <th className="text-left py-3 px-6 text-xs font-semibold text-zinc-400 uppercase">Date</th>
-                  <th className="text-left py-3 px-6 text-xs font-semibold text-zinc-400 uppercase">Type</th>
-                  <th className="text-right py-3 px-6 text-xs font-semibold text-zinc-400 uppercase">Quantity</th>
-                  <th className="text-right py-3 px-6 text-xs font-semibold text-zinc-400 uppercase">Price</th>
-                  <th className="text-right py-3 px-6 text-xs font-semibold text-zinc-400 uppercase">Value</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/5">
-                {loading ? (
-                  <tr>
-                    <td colSpan={6} className="py-16 text-center text-zinc-500">
-                      <div className="animate-spin h-6 w-6 border-2 border-cyan-500 border-t-transparent rounded-full mx-auto mb-2"></div>
-                      Loading deals...
-                    </td>
+<div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-zinc-800/50 border-b border-white/5">
+                    <SortHeader label="Company" sortKeyName="company" />
+                    <SortHeader label="Date" sortKeyName="date" />
+                    <SortHeader label="Type" sortKeyName="side" />
+                    <SortHeader label="Quantity" sortKeyName="quantity" align="right" />
+                    <SortHeader label="Price" sortKeyName="price" align="right" />
+                    <SortHeader label="LTP" sortKeyName="ltp" align="right" />
+                    <SortHeader label="Alpha" sortKeyName="alpha" align="right" />
+                    <SortHeader label="Value" sortKeyName="value" align="right" />
                   </tr>
-                ) : paginated.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="py-16 text-center text-zinc-500">
-                      No deals found for this investor
-                    </td>
-                  </tr>
-                ) : paginated.map((d, i) => {
-                  const value = (d.quantity || 0) * (d.price || 0)
-                  const isBigMoney = value >= 1e8 // ₹10 Cr+
-                  const dateObj = new Date(d.date)
-                  const dateStr = isNaN(dateObj.getTime()) ? d.date : dateObj.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
-                  
-                  return (
-                    <tr key={i} className={clsx(
-                      "hover:bg-white/5 transition-colors",
-                      isBigMoney && "bg-gradient-to-r from-amber-500/5 to-transparent"
-                    )}>
-                      <td className="py-4 px-6">
-                        <Link 
-                          href={`/bulk-deals/company/${encodeURIComponent(d.scripCode || d.securityName)}`}
-                          className="text-white font-medium hover:text-cyan-400 transition-colors flex items-center gap-1"
-                        >
-                          {d.securityName}
-                          <ExternalLink className="h-3 w-3 opacity-50" />
-                        </Link>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-xs text-zinc-500">{d.scripCode}</span>
-                          <span className={clsx(
-                            "text-[10px] px-1.5 py-0.5 rounded font-medium",
-                            d.exchange === "BSE" ? "bg-orange-500/20 text-orange-400" : "bg-blue-500/20 text-blue-400"
-                          )}>
-                            {d.exchange}
-                          </span>
-                          {isBigMoney && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/20 text-amber-400 flex items-center gap-0.5">
-                              <Flame className="h-2.5 w-2.5" />
-                              BIG
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-4 px-6 text-sm text-zinc-400">{dateStr}</td>
-                      <td className="py-4 px-6">
-                        <span className={clsx(
-                          "inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold",
-                          d.side === "BUY" 
-                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
-                            : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                        )}>
-                          {d.side === "BUY" ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                          {d.side}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 text-right text-sm text-zinc-300">
-                        {(d.quantity || 0).toLocaleString()}
-                      </td>
-                      <td className="py-4 px-6 text-right text-sm text-zinc-300">
-                        ₹{(d.price || 0).toFixed(2)}
-                      </td>
-                      <td className="py-4 px-6 text-right">
-                        <div className={clsx(
-                          "font-bold text-sm",
-                          d.side === "BUY" ? "text-emerald-400" : "text-rose-400"
-                        )}>
-                          ₹{rupeeCompact(value)}
-                        </div>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {loading ? (
+                    <tr>
+                      <td colSpan={8} className="py-16 text-center text-zinc-500">
+                        <div className="animate-spin h-6 w-6 border-2 border-cyan-500 border-t-transparent rounded-full mx-auto mb-2"></div>
+                        Loading deals...
                       </td>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                  ) : paginated.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-16 text-center text-zinc-500">
+                        No deals found for this investor
+                      </td>
+                    </tr>
+                  ) : paginated.map((d, i) => {
+                    const value = (d.quantity || 0) * (d.price || 0)
+                    const isBigMoney = value >= 1e8
+                    const dateObj = new Date(d.date)
+                    const dateStr = isNaN(dateObj.getTime()) ? d.date : dateObj.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+                    
+                    return (
+                      <tr key={i} className={clsx(
+                        "hover:bg-white/5 transition-colors",
+                        isBigMoney && "bg-gradient-to-r from-amber-500/5 to-transparent"
+                      )}>
+                        <td className="py-4 px-6">
+                          <Link 
+                            href={`/bulk-deals/company/${encodeURIComponent(d.scripCode || d.securityName)}`}
+                            className="text-white font-medium hover:text-cyan-400 transition-colors flex items-center gap-1"
+                          >
+                            {d.securityName}
+                            <ExternalLink className="h-3 w-3 opacity-50" />
+                          </Link>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-xs text-zinc-500">{d.scripCode}</span>
+                            <span className={clsx(
+                              "text-[10px] px-1.5 py-0.5 rounded font-medium",
+                              d.exchange === "BSE" ? "bg-orange-500/20 text-orange-400" : "bg-blue-500/20 text-blue-400"
+                            )}>
+                              {d.exchange}
+                            </span>
+                            {isBigMoney && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/20 text-amber-400 flex items-center gap-0.5">
+                                <Flame className="h-2.5 w-2.5" />
+                                BIG
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-4 px-6 text-sm text-zinc-400">{dateStr}</td>
+                        <td className="py-4 px-6">
+                          <span className={clsx(
+                            "inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold",
+                            d.side === "BUY" 
+                              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                              : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
+                          )}>
+                            {d.side === "BUY" ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                            {d.side}
+                          </span>
+                        </td>
+                        <td className="py-4 px-6 text-right text-sm text-zinc-300">
+                          {(d.quantity || 0).toLocaleString()}
+                        </td>
+                        <td className="py-4 px-6 text-right text-sm text-zinc-300">
+                          ₹{(d.price || 0).toFixed(2)}
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          {ltpLoading ? (
+                            <span className="text-xs text-zinc-500 animate-pulse">...</span>
+                          ) : d.ltp ? (
+                            <span className="text-sm font-medium text-cyan-400">₹{d.ltp.toFixed(2)}</span>
+                          ) : (
+                            <span className="text-xs text-zinc-600">—</span>
+                          )}
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          {d.alpha != null ? (
+                            <span className={clsx(
+                              "inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-xs font-bold",
+                              d.alpha >= 50 ? "bg-emerald-500/20 text-emerald-300" :
+                              d.alpha >= 0 ? "bg-emerald-500/10 text-emerald-400" :
+                              d.alpha >= -20 ? "bg-rose-500/10 text-rose-400" :
+                              "bg-rose-500/20 text-rose-300"
+                            )}>
+                              {d.alpha >= 0 ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
+                              {d.alpha >= 0 ? "+" : ""}{d.alpha.toFixed(1)}%
+                            </span>
+                          ) : ltpLoading ? (
+                            <span className="text-xs text-zinc-500 animate-pulse">...</span>
+                          ) : (
+                            <span className="text-xs text-zinc-600">—</span>
+                          )}
+                        </td>
+                        <td className="py-4 px-6 text-right">
+                          <div className={clsx(
+                            "font-bold text-sm",
+                            d.side === "BUY" ? "text-emerald-400" : "text-rose-400"
+                          )}>
+                            ₹{rupeeCompact(value)}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
 
           {/* Pagination */}
           {totalPages > 1 && (
             <div className="p-4 border-t border-white/5 flex items-center justify-between">
               <div className="text-sm text-zinc-500">
-                Showing {((page - 1) * perPage) + 1} to {Math.min(page * perPage, filtered.length)} of {filtered.length} deals
+                Showing {((page - 1) * perPage) + 1} to {Math.min(page * perPage, sorted.length)} of {sorted.length} deals
               </div>
               <div className="flex gap-2">
                 <button

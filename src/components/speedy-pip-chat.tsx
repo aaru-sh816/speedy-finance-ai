@@ -552,6 +552,9 @@ function generateFollowUps(response: string, asked: string[], ticker?: string): 
   return questions.filter(q => !asked.includes(q)).slice(0, 4)
 }
 
+// Helper to generate unique IDs
+const generateId = () => Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+
 export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClose, companyAnnouncements = [], preSelectedDocIds = [], initialMaximized = false }: SpeedyPipChatProps) {
   // State
   const [activeAnnouncement, setActiveAnnouncement] = useState(initialAnnouncement)
@@ -745,13 +748,13 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
     const allDocIds = [activeAnnouncement.id, ...sameCompanyAnnouncements.map(a => a.id)]
     setMultiDocMode(true)
     setSelectedDocs(allDocIds)
-    setMessages([{
-      id: "multi-" + Date.now(),
-      role: "assistant",
-      content: `🔗 **Multi-Document Mode**\n\nAnalyzing **${allDocIds.length} announcements** from **${activeAnnouncement.company}**.\n\nI can now compare, find patterns, and answer questions across all selected documents.`,
-      timestamp: new Date(),
-      suggestedQuestions: ["Compare all?", "Find patterns?", "Timeline of events?"]
-    }])
+      setMessages([{
+        id: "multi-" + generateId(),
+        role: "assistant",
+        content: `🔗 **Multi-Document Mode**\n\nAnalyzing **${allDocIds.length} announcements** from **${activeAnnouncement.company}**.\n\nI can now compare, find patterns, and answer questions across all selected documents.`,
+        timestamp: new Date(),
+        suggestedQuestions: ["Compare all?", "Find patterns?", "Timeline of events?"]
+      }])
     setShowDocs(true) // Keep docs panel open to show all selected
   }
 
@@ -792,7 +795,7 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
     fullText: string,
     meta: Omit<ChatMessage, "id" | "role" | "content" | "timestamp">
   ) => {
-    const id = (Date.now() + Math.random()).toString()
+    const id = generateId()
     const timestamp = new Date()
 
     setMessages(prev => [
@@ -809,14 +812,14 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
     ])
   }
 
-  // Send message
+  // Send message with streaming
   const send = async (custom?: string) => {
     const msg = custom || input.trim()
     if (!msg || isLoading) return
 
     setAsked(prev => [...prev, msg])
     setMessages(prev => [...prev, {
-      id: Date.now().toString(),
+      id: generateId(),
       role: "user",
       content: msg,
       timestamp: new Date(),
@@ -827,6 +830,7 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
     setIsLoading(true)
 
     let webSources: WebSource[] = []
+    const streamMsgId = generateId()
     
     try {
       let extra = ""
@@ -840,7 +844,6 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
           if (sr.ok) {
             const d = await sr.json()
             if (d.content) extra = `\n\nWeb: ${d.content}`
-            // Extract web citations
             if (d.citations && Array.isArray(d.citations)) {
               webSources = d.citations.map((c: any) => ({
                 url: c.url,
@@ -852,14 +855,20 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
         } catch (e) {}
       }
 
-      // Build context message for multi-doc mode
       let contextMsg = msg + extra
       if (multiDocMode && selectedDocs.length > 1) {
-        const selectedAnns = [activeAnnouncement, ...sameCompanyAnnouncements].filter(a => selectedDocs.includes(a.id))
         contextMsg = `[Multi-document query across ${selectedDocs.length} announcements]\n\n${msg}${extra}`
       }
 
-      const res = await fetch("/api/ai/chat", {
+      setMessages(prev => [...prev, {
+        id: streamMsgId,
+        role: "assistant",
+        content: "",
+        timestamp: new Date(),
+        isStreaming: true
+      }])
+
+      const res = await fetch("/api/ai/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -877,38 +886,94 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
             impact: activeAnnouncement.impact,
             pdfUrl: activeAnnouncement.pdfUrl
           },
-          history: messages.slice(-6).map(m => ({ role: m.role, content: m.content })),
-          includePdfAnalysis: true,
-          multiDocMode: multiDocMode,
-          selectedDocIds: selectedDocs,
+          history: messages.slice(-8).map(m => ({ role: m.role, content: m.content })),
+          stream: true
         })
       })
 
-      if (res.ok) {
-        const data = await res.json()
-        const text = data.response || "Could not generate response."
-        const followUps = generateFollowUps(text, asked, activeAnnouncement.ticker)
-        const metrics = extractMetrics(text)
-        const { hasTable, hasTimeline } = detectContentType(text)
+      if (!res.ok) throw new Error("Stream failed")
 
-          appendAssistantMessage(text, {
-            citations: data.citations,
-            webSources: webSources.length > 0 ? webSources : undefined,
-            suggestedQuestions: followUps,
-            metrics: metrics.length > 0 ? metrics : undefined,
-            widgets: data.widgets,
-            hasTable,
-            hasTimeline
-          })
+      const reader = res.body?.getReader()
+      const decoder = new TextDecoder()
+      let fullContent = ""
+      let receivedWidgets: any[] = []
+      let receivedCitations: PdfCitation[] = []
 
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          const chunk = decoder.decode(value)
+          const lines = chunk.split("\n")
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(line.slice(6))
+                
+                if (data.type === "content") {
+                  fullContent += data.content
+                  setMessages(prev => prev.map(m => 
+                    m.id === streamMsgId 
+                      ? { ...m, content: fullContent }
+                      : m
+                  ))
+                } else if (data.type === "widgets") {
+                  receivedWidgets = data.widgets || []
+                  setMessages(prev => prev.map(m => 
+                    m.id === streamMsgId 
+                      ? { ...m, widgets: receivedWidgets }
+                      : m
+                  ))
+                } else if (data.type === "done") {
+                  receivedCitations = data.citations || []
+                  const followUps = generateFollowUps(fullContent, asked, activeAnnouncement.ticker)
+                  const metrics = extractMetrics(fullContent)
+                  const { hasTable, hasTimeline } = detectContentType(fullContent)
+
+                  setMessages(prev => prev.map(m => 
+                    m.id === streamMsgId 
+                      ? { 
+                          ...m, 
+                          content: fullContent,
+                          isStreaming: false,
+                          citations: receivedCitations,
+                          webSources: webSources.length > 0 ? webSources : undefined,
+                          suggestedQuestions: followUps,
+                          metrics: metrics.length > 0 ? metrics : undefined,
+                          widgets: receivedWidgets.length > 0 ? receivedWidgets : undefined,
+                          hasTable,
+                          hasTimeline,
+                          rating: null
+                        }
+                      : m
+                  ))
+                } else if (data.type === "error") {
+                  throw new Error(data.error)
+                }
+              } catch (parseErr) {}
+            }
+          }
+        }
       }
     } catch (e) {
-      setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: "Error. Please try again.",
-        timestamp: new Date()
-      }])
+      setMessages(prev => {
+        const existing = prev.find(m => m.id === streamMsgId)
+        if (existing) {
+          return prev.map(m => 
+            m.id === streamMsgId 
+              ? { ...m, content: "Error. Please try again.", isStreaming: false }
+              : m
+          )
+        }
+        return [...prev, {
+          id: streamMsgId,
+          role: "assistant" as const,
+          content: "Error. Please try again.",
+          timestamp: new Date()
+        }]
+      })
     } finally {
       setIsLoading(false)
     }
@@ -1279,16 +1344,20 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
               {m.role === "user" ? <User className="h-4 w-4 text-zinc-400" /> : <Bot className="h-4 w-4 text-white" />}
             </div>
 
-            <div className={`max-w-[92%] ${m.role === "user" ? "text-right" : ""}`}>
-              <div className={`group relative rounded-2xl px-4 py-3 ${m.role === "user" ? "bg-white/10" : "bg-white/5 border border-white/5"}`}>
-                {/* Use markdown renderer for assistant, simple text for user */}
-                {m.role === "assistant" ? (
-                  renderMarkdown(m.content)
-                ) : (
-                  <p className="text-sm md:text-base text-zinc-300 leading-relaxed whitespace-pre-wrap">
-                    {m.content}
-                  </p>
-                )}
+              <div className={`max-w-[92%] ${m.role === "user" ? "text-right" : ""}`}>
+                <div className={`group relative rounded-2xl px-4 py-3 ${m.role === "user" ? "bg-white/10" : "bg-white/5 border border-white/5"}`}>
+                  {m.role === "assistant" ? (
+                    <>
+                      {renderMarkdown(m.content)}
+                      {m.isStreaming && (
+                        <span className="inline-block w-2 h-4 ml-1 bg-cyan-400 animate-pulse rounded-sm" />
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm md:text-base text-zinc-300 leading-relaxed whitespace-pre-wrap">
+                      {m.content}
+                    </p>
+                  )}
                 
                   {/* Copy button */}
                   {m.role === "assistant" && (
