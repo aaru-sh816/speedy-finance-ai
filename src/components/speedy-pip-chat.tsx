@@ -16,6 +16,8 @@ interface PdfCitation {
   page: number
   snippet: string
   openUrl: string
+  docId?: string
+  headline?: string
 }
 
 interface WebSource {
@@ -509,47 +511,130 @@ function renderMarkdown(content: string): React.ReactNode {
   return <div className="space-y-1.5">{elements}</div>
 }
 
-// Generate context-aware follow-up questions
+// Generate highly context-aware follow-up questions based on actual content
 function generateFollowUps(response: string, asked: string[], ticker?: string): string[] {
   const questions: string[] = []
   const lower = response.toLowerCase()
+  const alreadyAsked = new Set(asked.map(a => a.toLowerCase()))
   
-  if (ticker && !asked.includes(`${ticker}?`)) {
-    questions.push(`${ticker}?`)
-  }
-  
-  if (lower.includes("wolf pack")) {
-    questions.push("Who are the whales?", "Past performance?")
-  }
-  if (lower.includes("whale") || lower.includes("institutional")) {
-    questions.push("Buy/Sell trend?", "Average cost?")
-  }
-  if (lower.includes("risk") || lower.includes("negative")) {
-    questions.push("Is it a Sell?", "Mitigation?")
-  }
-  if (lower.includes("mw") || lower.includes("capacity")) {
-    questions.push("Timeline?", "Investment?")
-  }
-  if (lower.includes("crore") || lower.includes("revenue") || lower.includes("earnings")) {
-    questions.push("YoY growth?", "Margins?", "Next quarter?")
-  }
-  if (lower.includes("board") || lower.includes("approved")) {
-    questions.push("Next steps?", "Effective date?")
-  }
-  if (lower.includes("dividend")) questions.push("Record date?", "Yield?")
-  if (lower.includes("acquisition") || lower.includes("buyback")) questions.push("Deal value?", "Premium?")
-  
-    // High-intelligence defaults based on general context
-    if (questions.length < 3) {
-      const defaults = ["Latest LTP?", "Who are the whales?", "Bull case?", "Bear case?", "Summary?"]
-      for (const d of defaults) {
-        if (questions.length >= 4) break
-        if (!questions.includes(d)) questions.push(d)
-      }
+  const addQ = (q: string) => {
+    if (!alreadyAsked.has(q.toLowerCase()) && !questions.includes(q)) {
+      questions.push(q)
     }
-
+  }
   
-  return questions.filter(q => !asked.includes(q)).slice(0, 4)
+  // CRISIS / INCIDENT / EMERGENCY (fire, accident, disaster, remand, arrest)
+  if (/fire|accident|disaster|explosion|remand|arrest|custody|investigation|incident|safety|audit/i.test(lower)) {
+    addQ("Insurance coverage?")
+    addQ("Production impact?")
+    addQ("Recovery timeline?")
+    addQ("Legal liability?")
+    return questions.slice(0, 4)
+  }
+  
+  // LEADERSHIP CHANGE (CEO, MD, interim, appointed, resigned)
+  if (/ceo|managing director|interim|appointed|resigned|leadership|succession|deputy/i.test(lower)) {
+    addQ("Succession plan?")
+    addQ("Continuity measures?")
+    addQ("Market reaction?")
+    addQ("Historical precedent?")
+    return questions.slice(0, 4)
+  }
+  
+  // LEGAL / REGULATORY (SEBI, penalty, compliance, NCLT, court, litigation)
+  if (/sebi|penalty|compliance|nclt|court|litigation|regulatory|violation|notice|show cause/i.test(lower)) {
+    addQ("Financial penalty?")
+    addQ("Appeal options?")
+    addQ("Business impact?")
+    addQ("Similar cases?")
+    return questions.slice(0, 4)
+  }
+  
+  // DIVIDEND / CORPORATE ACTION
+  if (/dividend|bonus|split|buyback/i.test(lower)) {
+    addQ("Record date?")
+    addQ("Yield calculation?")
+    addQ("Payout history?")
+    addQ("Tax implications?")
+    return questions.slice(0, 4)
+  }
+  
+  // QUARTERLY RESULTS / EARNINGS
+  if (/quarter|q[1-4]|result|earnings|pat|eps|revenue grew|profit|ebitda/i.test(lower)) {
+    addQ("Beat or miss?")
+    addQ("YoY comparison?")
+    addQ("Guidance outlook?")
+    addQ("Margin analysis?")
+    return questions.slice(0, 4)
+  }
+  
+  // M&A / ACQUISITION / STAKE
+  if (/acquisition|merger|stake|buyout|takeover|amalgamation/i.test(lower)) {
+    addQ("Valuation rationale?")
+    addQ("Synergy targets?")
+    addQ("Integration timeline?")
+    addQ("Funding structure?")
+    return questions.slice(0, 4)
+  }
+  
+  // FUNDRAISE / QIP / RIGHTS ISSUE
+  if (/qip|rights issue|preferential|fundraise|capital raise|equity infusion/i.test(lower)) {
+    addQ("Dilution impact?")
+    addQ("Use of proceeds?")
+    addQ("Issue price vs CMP?")
+    addQ("Investor interest?")
+    return questions.slice(0, 4)
+  }
+  
+  // EXPANSION / PROJECT / CAPEX
+  if (/expansion|capex|project|capacity|plant|factory|commissioning/i.test(lower)) {
+    addQ("Commissioning date?")
+    addQ("Revenue potential?")
+    addQ("Funding source?")
+    addQ("ROI estimate?")
+    return questions.slice(0, 4)
+  }
+  
+  // ORDER WIN / CONTRACT
+  if (/order|contract|awarded|tender|supply agreement/i.test(lower)) {
+    addQ("Order value?")
+    addQ("Execution timeline?")
+    addQ("Margin profile?")
+    addQ("Repeat potential?")
+    return questions.slice(0, 4)
+  }
+  
+  // WHALE / BULK DEAL / INSTITUTIONAL
+  if (/whale|bulk deal|block deal|institutional|fii|dii|promoter|stake sale/i.test(lower)) {
+    addQ("Cost basis?")
+    addQ("Accumulation pattern?")
+    addQ("Exit triggers?")
+    addQ("Historical trades?")
+    return questions.slice(0, 4)
+  }
+  
+  // PRESS RELEASE / GENERAL ANNOUNCEMENT
+  if (/press release|announcement|disclosure|update/i.test(lower)) {
+    addQ("Key highlights?")
+    addQ("Material impact?")
+    addQ("Timeline details?")
+    addQ("Stock impact?")
+    return questions.slice(0, 4)
+  }
+  
+  // GENERIC FALLBACK - smart contextual defaults
+  const contextualDefaults = [
+    "What's the impact?",
+    "Next steps?",
+    "Timeline?",
+    "Stock outlook?"
+  ]
+  for (const d of contextualDefaults) {
+    if (questions.length >= 4) break
+    addQ(d)
+  }
+  
+  return questions.slice(0, 4)
 }
 
 // Helper to generate unique IDs
@@ -868,28 +953,46 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
         isStreaming: true
       }])
 
-      const res = await fetch("/api/ai/chat/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: contextMsg,
-          announcement: {
-            id: activeAnnouncement.id,
-            company: activeAnnouncement.company,
-            ticker: activeAnnouncement.ticker,
-            scripCode: activeAnnouncement.scripCode,
-            headline: activeAnnouncement.headline,
-            summary: activeAnnouncement.summary,
-            category: activeAnnouncement.category,
-            subCategory: activeAnnouncement.subCategory,
-            time: activeAnnouncement.time,
-            impact: activeAnnouncement.impact,
-            pdfUrl: activeAnnouncement.pdfUrl
-          },
-          history: messages.slice(-8).map(m => ({ role: m.role, content: m.content })),
-          stream: true
+        const res = await fetch("/api/ai/chat/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: contextMsg,
+            announcement: {
+              id: activeAnnouncement.id,
+              company: activeAnnouncement.company,
+              ticker: activeAnnouncement.ticker,
+              scripCode: activeAnnouncement.scripCode,
+              headline: activeAnnouncement.headline,
+              summary: activeAnnouncement.summary,
+              category: activeAnnouncement.category,
+              subCategory: activeAnnouncement.subCategory,
+              time: activeAnnouncement.time,
+              impact: activeAnnouncement.impact,
+              pdfUrl: activeAnnouncement.pdfUrl
+            },
+            history: messages.slice(-8).map(m => ({ role: m.role, content: m.content })),
+            stream: true,
+            multiDocMode: multiDocMode && selectedDocs.length > 1,
+            selectedAnnouncements: multiDocMode && selectedDocs.length > 1
+              ? [activeAnnouncement, ...sameCompanyAnnouncements]
+                  .filter(a => selectedDocs.includes(a.id))
+                  .map(a => ({
+                    id: a.id,
+                    company: a.company,
+                    ticker: a.ticker,
+                    scripCode: a.scripCode,
+                    headline: a.headline,
+                    summary: a.summary,
+                    category: a.category,
+                    subCategory: a.subCategory,
+                    time: a.time,
+                    impact: a.impact,
+                    pdfUrl: a.pdfUrl
+                  }))
+              : undefined
+          })
         })
-      })
 
       if (!res.ok) throw new Error("Stream failed")
 
@@ -1376,36 +1479,39 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
                 ))}
 
 
-              {/* PDF Citations - Enhanced Display */}
-              {m.citations && m.citations.length > 0 && (
-                <div className="mt-4 p-4 rounded-xl bg-gradient-to-br from-cyan-500/5 to-blue-500/5 border border-cyan-500/20">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-6 h-6 rounded-lg bg-cyan-500/20 flex items-center justify-center">
-                      <FileText className="h-3.5 w-3.5 text-cyan-400" />
+              {/* PDF Citations - Enhanced Display with Multi-Doc support */}
+                {m.citations && m.citations.length > 0 && (
+                  <div className="mt-4 p-4 rounded-xl bg-gradient-to-br from-cyan-500/5 to-blue-500/5 border border-cyan-500/20">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-6 h-6 rounded-lg bg-cyan-500/20 flex items-center justify-center">
+                        <FileText className="h-3.5 w-3.5 text-cyan-400" />
+                      </div>
+                      <span className="text-xs font-medium text-cyan-400">📄 Sources from PDF{multiDocMode && m.citations.some(c => c.headline) ? 's' : ''}</span>
                     </div>
-                    <span className="text-xs font-medium text-cyan-400">📄 Sources from PDF</span>
+                    <div className="grid gap-2">
+                      {m.citations.map((c, i) => (
+                        <a
+                          key={i}
+                          href={c.openUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="group flex items-start gap-3 p-3 rounded-lg bg-zinc-900/50 border border-white/10 hover:bg-cyan-500/10 hover:border-cyan-500/30 transition-all"
+                        >
+                          <div className="w-10 h-10 rounded-lg bg-cyan-500/20 flex items-center justify-center flex-shrink-0">
+                            <span className="text-xs font-bold text-cyan-400">P{c.page}</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            {c.headline && (
+                              <p className="text-[10px] text-cyan-500 font-medium mb-1 truncate">📑 {c.headline}...</p>
+                            )}
+                            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-normal">{c.snippet || `Content from page ${c.page}`}</p>
+                          </div>
+                          <ExternalLink className="h-3.5 w-3.5 text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5" />
+                        </a>
+                      ))}
+                    </div>
                   </div>
-                  <div className="grid gap-2">
-                    {m.citations.map((c, i) => (
-                      <a
-                        key={i}
-                        href={c.openUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="group flex items-start gap-3 p-3 rounded-lg bg-zinc-900/50 border border-white/10 hover:bg-cyan-500/10 hover:border-cyan-500/30 transition-all"
-                      >
-                        <div className="w-10 h-10 rounded-lg bg-cyan-500/20 flex items-center justify-center flex-shrink-0">
-                          <span className="text-xs font-bold text-cyan-400">P{c.page}</span>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[11px] text-zinc-400 line-clamp-2 leading-normal">{c.snippet || `Content from page ${c.page}`}</p>
-                        </div>
-                        <ExternalLink className="h-3.5 w-3.5 text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5" />
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
+                )}
 
               {/* Web Sources - Enhanced Display */}
               {m.webSources && m.webSources.length > 0 && (

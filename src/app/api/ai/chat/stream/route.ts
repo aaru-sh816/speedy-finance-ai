@@ -260,29 +260,33 @@ async function executeTool(name: string, args: any): Promise<any> {
   }
 }
 
+interface AnnouncementData {
+  id: string
+  company: string
+  ticker: string
+  scripCode: string
+  headline: string
+  summary?: string
+  category: string
+  subCategory?: string
+  time: string
+  impact?: string
+  pdfUrl?: string
+}
+
 interface ChatRequest {
   message: string
-  announcement: {
-    id: string
-    company: string
-    ticker: string
-    scripCode: string
-    headline: string
-    summary?: string
-    category: string
-    subCategory?: string
-    time: string
-    impact?: string
-    pdfUrl?: string
-  }
+  announcement: AnnouncementData
   history: Array<{ role: "user" | "assistant"; content: string }>
   stream?: boolean
+  multiDocMode?: boolean
+  selectedAnnouncements?: AnnouncementData[]
 }
 
 export async function POST(request: Request) {
   try {
     const body: ChatRequest = await request.json()
-    const { message, announcement, history = [], stream = true } = body
+    const { message, announcement, history = [], stream = true, multiDocMode = false, selectedAnnouncements = [] } = body
 
     if (!message || !announcement) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
@@ -299,62 +303,114 @@ export async function POST(request: Request) {
     let pdfContext = ""
     let extractedEntities: any[] = []
     let extractedTables: any[] = []
-    const citationItems: { page: number; snippet: string; openUrl: string; score?: number }[] = []
+    const citationItems: { page: number; snippet: string; openUrl: string; score?: number; docId?: string; headline?: string }[] = []
 
-    if (announcement.pdfUrl) {
+    // Determine which announcements to process
+    const announcementsToProcess: AnnouncementData[] = multiDocMode && selectedAnnouncements.length > 0
+      ? selectedAnnouncements
+      : [announcement]
+
+    console.log(`[MultiDoc] Processing ${announcementsToProcess.length} documents, multiDocMode=${multiDocMode}`)
+
+    // Process ALL documents in multi-doc mode
+    const allHits: { text: string; page: number; score: number; pdfUrl: string; docId: string; headline: string }[] = []
+    
+    for (const ann of announcementsToProcess) {
+      if (!ann.pdfUrl) continue
+
       try {
-        const visionResult = await extractPdfWithVision(announcement.pdfUrl, openaiKey)
+        const visionResult = await extractPdfWithVision(ann.pdfUrl, openaiKey)
         
         if (visionResult.allEntities.length > 0) {
-          pdfContext += formatEntitiesForPrompt(visionResult.allEntities)
-          extractedEntities = visionResult.allEntities
+          extractedEntities.push(...visionResult.allEntities.map(e => ({ ...e, docId: ann.id })))
         }
         
         if (visionResult.tables.length > 0) {
-          pdfContext += formatTablesForPrompt(visionResult.tables)
-          extractedTables = visionResult.tables
+          extractedTables.push(...visionResult.tables.map(t => ({ ...t, docId: ann.id })))
         }
 
         if (visionResult.pages.length > 0) {
           const chunks = chunkPages(visionResult.pages.map(p => ({ page: p.page, text: p.text })), 800)
           
           if (chunks.length > 0) {
-            await ensureIndexed(announcement.pdfUrl, visionResult.pages, openaiKey)
+            await ensureIndexed(ann.pdfUrl, visionResult.pages, openaiKey)
             const [qEmb] = await embedTexts(openaiKey, [message])
-            const initialHits = await topK(announcement.pdfUrl, qEmb, 15)
+            const hits = await topK(ann.pdfUrl, qEmb, multiDocMode ? 8 : 15)
             
-            const reranked = await hybridRerank(
-              message,
-              initialHits.map(h => ({ text: h.text, page: h.page, score: h.score })),
-              openaiKey,
-              6
-            )
-
-            if (reranked.length > 0) {
-              pdfContext += `\n\n## MOST RELEVANT PDF SECTIONS:\n`
-              for (const hit of reranked) {
-                pdfContext += `\n### [Page ${hit.page}] (Relevance: ${(hit.relevance_score * 100).toFixed(0)}%)\n${hit.text}\n`
-                citationItems.push({
-                  page: hit.page,
-                  snippet: hit.text.slice(0, 400),
-                  openUrl: `${announcement.pdfUrl}#page=${hit.page}`,
-                  score: hit.relevance_score
-                })
-              }
+            for (const hit of hits) {
+              allHits.push({
+                ...hit,
+                pdfUrl: ann.pdfUrl,
+                docId: ann.id,
+                headline: ann.headline.slice(0, 60)
+              })
             }
-          }
-
-          const isNameQuery = /who|name|allott|director|shareholder|investor|person|list.*all|vineet/i.test(message)
-          if (isNameQuery && visionResult.rawText) {
-            pdfContext += `\n\n## FULL DOCUMENT TEXT (for comprehensive search):\n${visionResult.rawText.slice(0, 12000)}`
           }
         }
       } catch (e) {
-        console.error("PDF extraction failed:", e)
+        console.error(`PDF extraction failed for ${ann.id}:`, e)
       }
     }
 
-    const contextPrompt = `
+    // Rerank ALL hits together for best cross-document relevance
+    if (allHits.length > 0) {
+      const reranked = await hybridRerank(
+        message,
+        allHits.map(h => ({ text: h.text, page: h.page, score: h.score })),
+        openaiKey,
+        multiDocMode ? 12 : 6
+      )
+
+      if (reranked.length > 0) {
+        pdfContext += `\n\n## MOST RELEVANT SECTIONS FROM ${announcementsToProcess.length} DOCUMENTS:\n`
+        
+        for (let i = 0; i < reranked.length; i++) {
+          const hit = reranked[i]
+          const originalHit = allHits.find(h => h.text === hit.text && h.page === hit.page)
+          const docLabel = multiDocMode && originalHit ? `[Doc: ${originalHit.headline}...]` : ""
+          
+          pdfContext += `\n### ${docLabel} [Page ${hit.page}] (Relevance: ${(hit.relevance_score * 100).toFixed(0)}%)\n${hit.text}\n`
+          
+          citationItems.push({
+            page: hit.page,
+            snippet: hit.text.slice(0, 400),
+            openUrl: originalHit ? `${originalHit.pdfUrl}#page=${hit.page}` : `#page=${hit.page}`,
+            score: hit.relevance_score,
+            docId: originalHit?.docId,
+            headline: originalHit?.headline
+          })
+        }
+      }
+    }
+
+    // For name queries in multi-doc mode, include more raw text
+    const isNameQuery = /who|name|allott|director|shareholder|investor|person|list.*all|vineet/i.test(message)
+    if (isNameQuery && announcementsToProcess.length > 0) {
+      for (const ann of announcementsToProcess.slice(0, 3)) {
+        if (!ann.pdfUrl) continue
+        try {
+          const visionResult = await extractPdfWithVision(ann.pdfUrl, openaiKey)
+          if (visionResult.rawText) {
+            pdfContext += `\n\n## FULL TEXT FROM: ${ann.headline.slice(0, 50)}...\n${visionResult.rawText.slice(0, 6000)}`
+          }
+        } catch {}
+      }
+    }
+
+    // Build context prompt for single or multi-doc mode
+    let contextPrompt = ""
+    if (multiDocMode && announcementsToProcess.length > 1) {
+      contextPrompt = `
+## MULTI-DOCUMENT ANALYSIS MODE
+Analyzing ${announcementsToProcess.length} documents from **${announcement.company}** (${announcement.ticker})
+
+### Documents in scope:
+${announcementsToProcess.map((a, i) => `${i + 1}. [${a.time}] ${a.headline.slice(0, 80)}... (${a.category})`).join("\n")}
+
+${pdfContext}
+`
+    } else {
+      contextPrompt = `
 ## CURRENT ANNOUNCEMENT
 - **Company**: ${announcement.company} (${announcement.ticker})
 - **BSE Code**: ${announcement.scripCode}
@@ -364,6 +420,7 @@ export async function POST(request: Request) {
 ${announcement.summary ? `- **Summary**: ${announcement.summary}` : ""}
 ${pdfContext}
 `
+    }
 
     const messages: any[] = [
       { role: "system", content: WORLD_CLASS_SYSTEM_PROMPT + "\n\n" + contextPrompt },

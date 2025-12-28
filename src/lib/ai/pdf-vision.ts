@@ -207,99 +207,18 @@ function extractTablesFromText(text: string, pageNum: number): TableData[] {
 }
 
 async function extractWithGPT4oVision(
-  pdfUrl: string,
-  openaiKey: string
+  _pdfUrl: string,
+  _openaiKey: string
 ): Promise<{ text: string; analysis: string } | null> {
-  try {
-    const response = await fetch(pdfUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://www.bseindia.com/",
-        "Accept": "application/pdf",
-      },
-      cache: "no-store",
-    })
-    
-    if (!response.ok) return null
-    
-    const arrayBuf = await response.arrayBuffer()
-    const base64Pdf = Buffer.from(arrayBuf).toString("base64")
-    
-    const visionResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${openaiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4o",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert financial document analyzer. Extract ALL information from this PDF with 100% accuracy.
+  return null
+}
 
-CRITICAL EXTRACTION REQUIREMENTS:
-1. Extract EVERY name mentioned (directors, shareholders, allottees, investors)
-2. Extract ALL monetary amounts with units (Cr, Lakh, etc.)
-3. Extract ALL dates (record date, ex-date, payment date, etc.)
-4. Extract ALL share quantities and percentages
-5. Identify and transcribe ALL tables completely
-6. Note any corporate actions (dividend, buyback, rights issue, bonus)
-
-OUTPUT FORMAT:
-## NAMES FOUND
-- [List every person name with their role if mentioned]
-
-## FINANCIAL FIGURES  
-- [List every amount with context]
-
-## DATES
-- [List every date with its purpose]
-
-## TABLES
-[Transcribe any tables in markdown format]
-
-## SUMMARY
-[3-line summary of what this document is about]`
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: "Extract ALL information from this BSE corporate announcement PDF. Be exhaustive - extract every name, every number, every date. Missing information is unacceptable."
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:application/pdf;base64,${base64Pdf}`,
-                  detail: "high"
-                }
-              }
-            ]
-          }
-        ],
-        max_tokens: 4000,
-        temperature: 0
-      }),
-    })
-
-    if (!visionResponse.ok) {
-      console.log("GPT-4o Vision not available for PDF, falling back to text extraction")
-      return null
-    }
-
-    const visionData = await visionResponse.json()
-    const analysis = visionData.choices?.[0]?.message?.content || ""
-    
-    return {
-      text: analysis,
-      analysis
-    }
-  } catch (e) {
-    console.error("GPT-4o Vision extraction failed:", e)
-    return null
-  }
+// Suppress pdf2json internal warnings globally
+const originalConsoleWarn = console.warn
+console.warn = (...args: any[]) => {
+  const msg = args[0]?.toString() || ''
+  if (msg.includes('TT:') || msg.includes('fake worker') || msg.includes('undefined function')) return
+  originalConsoleWarn.apply(console, args)
 }
 
 export async function extractPdfWithVision(

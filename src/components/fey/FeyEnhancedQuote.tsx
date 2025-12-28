@@ -290,7 +290,7 @@ export function FeyEnhancedQuote({ scripCode }: FeyEnhancedQuoteProps) {
                     </div>
                     <div className="flex justify-between items-center text-[10px]">
                       <span className="text-zinc-500">Price: ₹{dot.price.toFixed(2)}</span>
-                      <span className="text-zinc-500">{new Date(dot.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' })}</span>
+                      <span className="text-zinc-500">{dot.date ? new Date(dot.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : 'N/A'}</span>
                     </div>
                     <div className="mt-2 pt-2 border-t border-white/5 text-[9px] text-cyan-400 italic">
                       Institutional "Wolf Pack" Entry
