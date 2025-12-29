@@ -1,4 +1,4 @@
-const BSE_SERVICE_URL = process.env.BSE_SERVICE_URL || 'http://localhost:5000'
+const BSE_SERVICE_URL = process.env.BSE_SERVICE_URL || 'http://localhost:8080'
 
 export interface BSEQuote {
   companyName: string

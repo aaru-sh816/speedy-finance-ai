@@ -193,7 +193,8 @@ export async function GET(request: NextRequest) {
     })
     } catch (error: any) {
       if (error.name === 'AbortError' || error.name === 'TimeoutError' || error.message.includes('BSE service returned')) {
-        console.warn(`Quote API issue for ${symbol}, trying fallbacks: ${error.message}`)
+        // Reduced noise: log as info instead of warn for common timeouts
+        console.info(`Quote API issue for ${symbol}, trying fallbacks: ${error.message}`)
         
         // Try direct BSE API as fallback
         try {
@@ -226,7 +227,7 @@ export async function GET(request: NextRequest) {
             }
           }
         } catch (e) {
-          console.warn(`BSE Direct fallback failed for ${symbol}`)
+          // Silent fallback failure
         }
         
         // Final fallback: try Google Finance
@@ -243,7 +244,8 @@ export async function GET(request: NextRequest) {
         )
       }
       
-      console.error(`Quote API error for ${symbol}:`, error.message || error)
+      // Log as warning instead of error for individual quote failures
+      console.warn(`Quote API error for ${symbol}:`, error.message || error)
 
     return NextResponse.json(
       { 

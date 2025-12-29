@@ -11,13 +11,16 @@ import {
 import type { BSEAnnouncement, BSEImpact } from "@/lib/bse/types"
 import { AISummaryPanel, VerdictBadge } from "@/components/ai-summary-panel"
 import { TradingViewChart } from "@/components/trading-view-chart"
+import { LightweightChart } from "@/components/lightweight-chart"
 import { type VerdictType, type AISummary, analyzeAnnouncement, getVerdictColor, getVerdictIcon, shouldExcludeAnnouncement } from "@/lib/ai/verdict"
+import { getMarketStatus } from "@/lib/bse/market-hours"
 import { FilterModal, FilterState, getDefaultFilters } from "@/components/filter-modal"
 import { StockTicker, type TickerStock } from "@/components/stock-ticker"
 import { SearchModal } from "@/components/search-modal"
 import { SpeedyPipChat } from "@/components/speedy-pip-chat"
 import { DigitalClock } from "@/components/digital-clock"
 import { ShareMenu } from "@/components/share-menu"
+import { SentimentBadge, RiskAlert, analyzeSentiment } from "@/components/sentiment-badge"
 
 function clsx(...v: (string | false | undefined)[]) {
   return v.filter(Boolean).join(" ")
@@ -137,6 +140,9 @@ export default function AnnouncementsPage() {
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [priceAtAnnouncement, setPriceAtAnnouncement] = useState<number | null>(null)
   
+  // Cache for prices captured at announcement time (persisted in localStorage)
+  const announcementPricesRef = useRef<Map<string, number>>(new Map())
+  
   // Company info for TradingView
   const [companyInfo, setCompanyInfo] = useState<CompanyInfo | null>(null)
   
@@ -150,6 +156,18 @@ export default function AnnouncementsPage() {
 
   // Ticker stocks
   const [tickerStocks, setTickerStocks] = useState<TickerStock[]>([])
+
+  // Market status helper
+  const getMarketStatusLabel = useCallback(() => {
+    const status = getMarketStatus();
+    
+    if (status.isWeekend) return { status: 'Closed', label: 'Weekend', color: 'text-rose-400', bg: 'bg-rose-500/20' }
+    if (status.isPreMarket) return { status: 'Closed', label: 'Pre-Market', color: 'text-amber-400', bg: 'bg-amber-500/20' }
+    if (status.isPostMarket) return { status: 'Closed', label: 'Post-Market', color: 'text-zinc-400', bg: 'bg-zinc-500/20' }
+    return { status: 'Open', label: 'Market Open', color: 'text-emerald-400', bg: 'bg-emerald-500/20' }
+  }, [])
+
+  const market = useMemo(() => getMarketStatusLabel(), [getMarketStatusLabel])
 
   // Mobile view state
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
@@ -199,6 +217,19 @@ export default function AnnouncementsPage() {
     }
   }, [selectedId, filters.fromDate, filters.toDate])
 
+  // Load cached announcement prices from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('speedy_announcement_prices')
+      if (stored) {
+        const parsed = JSON.parse(stored) as Record<string, number>
+        Object.entries(parsed).forEach(([id, price]) => {
+          announcementPricesRef.current.set(id, price)
+        })
+      }
+    } catch {}
+  }, [])
+
   // Initial fetch
   useEffect(() => {
     fetchAnnouncements()
@@ -219,6 +250,37 @@ export default function AnnouncementsPage() {
     }
   }, [autoRefresh, fetchAnnouncements])
 
+  // Capture price for NEW announcements arriving during market hours
+  useEffect(() => {
+    const marketStatus = getMarketStatus()
+    if (!marketStatus.isOpen) return
+    
+    const newAnnouncements = announcements.filter(a => {
+      const annDate = new Date(a.time)
+      const now = new Date()
+      const diffMs = now.getTime() - annDate.getTime()
+      const diffMins = Math.floor(diffMs / 60000)
+      return diffMins < 5 && !announcementPricesRef.current.has(a.id)
+    })
+    
+    if (newAnnouncements.length === 0) return
+    
+    newAnnouncements.forEach(async (a) => {
+      try {
+        const res = await fetch(`/api/bse/quote?symbol=${encodeURIComponent(a.scripCode)}`, { cache: "no-store" })
+        const d = await res.json()
+        if (d && d.price) {
+          announcementPricesRef.current.set(a.id, d.price)
+          try {
+            const existing = JSON.parse(localStorage.getItem('speedy_announcement_prices') || '{}')
+            existing[a.id] = d.price
+            localStorage.setItem('speedy_announcement_prices', JSON.stringify(existing))
+          } catch {}
+        }
+      } catch {}
+    })
+  }, [announcements])
+
   // Get selected announcement - check both main and company announcements
   const selected = useMemo(() => {
     // First check main announcements
@@ -229,54 +291,96 @@ export default function AnnouncementsPage() {
     return fromCompany || null
   }, [announcements, companyAnnouncements, selectedId])
 
-  // Fetch quote when selection changes
+  // Fetch current quote data
+  const fetchCurrentQuote = useCallback(async (scripCode: string, announcementId: string, announcementTime: string) => {
+    setQuoteLoading(true)
+    try {
+      const res = await fetch(`/api/bse/quote?symbol=${encodeURIComponent(scripCode)}`, { cache: "no-store" })
+      const d = await res.json()
+      
+      if (!d || d.error) {
+        setQuote(null)
+        return
+      }
+      
+      setQuote({
+        symbol: d.symbol,
+        price: d.price,
+        previousClose: d.previousClose,
+        change: d.change,
+        changePercent: d.changePercent,
+        volume: d.volume,
+        dayHigh: d.dayHigh,
+        dayLow: d.dayLow,
+        marketCap: d.marketCap,
+      })
+      
+      // Priority 1: Use cached price captured at announcement time (if user was online)
+      const cachedPrice = announcementPricesRef.current.get(announcementId)
+      if (cachedPrice) {
+        setPriceAtAnnouncement(cachedPrice)
+        return
+      }
+      
+      // Priority 2: For very recent announcements during market hours, capture now
+      const annDate = new Date(announcementTime)
+      const now = new Date()
+      const diffMs = now.getTime() - annDate.getTime()
+      const diffMins = Math.floor(diffMs / 60000)
+      const marketStatus = getMarketStatus()
+      
+      if (diffMins < 5 && marketStatus.status === 'Open' && d.price) {
+        setPriceAtAnnouncement(d.price)
+        announcementPricesRef.current.set(announcementId, d.price)
+        try {
+          const existing = JSON.parse(localStorage.getItem('speedy_announcement_prices') || '{}')
+          existing[announcementId] = d.price
+          localStorage.setItem('speedy_announcement_prices', JSON.stringify(existing))
+        } catch {}
+        return
+      }
+      
+      // Priority 3: Fallback to previous close for same-day announcements
+      const isSameDay = annDate.toDateString() === now.toDateString()
+      const isPostMarket = annDate.getHours() >= 15 || annDate.getHours() < 9
+      
+      if (isSameDay || isPostMarket) {
+        if (d.previousClose) {
+          setPriceAtAnnouncement(d.previousClose)
+        } else if (d.price && d.change != null) {
+          setPriceAtAnnouncement(d.price - d.change)
+        } else if (d.price && d.changePercent != null) {
+          setPriceAtAnnouncement(d.price / (1 + (d.changePercent / 100)))
+        }
+      } else if (d.previousClose) {
+        setPriceAtAnnouncement(d.previousClose)
+      }
+    } catch (e) {
+      console.error("Failed to fetch quote", e)
+      setQuote(null)
+    } finally {
+      setQuoteLoading(false)
+    }
+  }, [])
+
+  // Fetch quote when selection changes OR every 10 seconds for real-time tracking
   useEffect(() => {
     if (!selected) return
-    const ctrl = new AbortController()
-    setQuoteLoading(true)
-    setPriceAtAnnouncement(null)
     
-    fetch(`/api/bse/quote?symbol=${encodeURIComponent(selected.scripCode)}`, { signal: ctrl.signal })
-      .then((r) => r.json())
-      .then((d) => {
-        if (!d || d.error) {
-          setQuote(null)
-          return
-        }
-        setQuote({
-          symbol: d.symbol,
-          price: d.price,
-          previousClose: d.previousClose,
-          change: d.change,
-          changePercent: d.changePercent,
-          volume: d.volume,
-          dayHigh: d.dayHigh,
-          dayLow: d.dayLow,
-          marketCap: d.marketCap,
-        })
-        
-        // For announcements from the same day, use previous close as reference price
-        const annDate = new Date(selected.time)
-        const today = new Date()
-        const isSameDay = annDate.toDateString() === today.toDateString()
-        const isPostMarket = annDate.getHours() >= 15 || annDate.getHours() < 9
-        
-        if (isSameDay || isPostMarket) {
-          // Use previous close as reference price for same-day or post-market announcements
-          if (d.previousClose) {
-            setPriceAtAnnouncement(d.previousClose)
-          }
-        } else {
-          // For older announcements, use previous close as approximation
-          if (d.previousClose) {
-            setPriceAtAnnouncement(d.previousClose)
-          }
-        }
-      })
-      .catch(() => setQuote(null))
-      .finally(() => setQuoteLoading(false))
-    return () => ctrl.abort()
-  }, [selected?.scripCode, selected?.time])
+    // Initial fetch when selection changes
+    setPriceAtAnnouncement(null)
+    fetchCurrentQuote(selected.scripCode, selected.id, selected.time)
+
+    // Setup 10-second interval for real-time price & alpha updates
+    const intervalId = setInterval(() => {
+      const marketStatus = getMarketStatus()
+      if (marketStatus.status === 'Open' || marketStatus.label === 'Pre-Market') {
+        fetchCurrentQuote(selected.scripCode, selected.id, selected.time)
+      }
+    }, 10000)
+
+    return () => clearInterval(intervalId)
+  }, [selected?.id, selected?.scripCode, selected?.time, fetchCurrentQuote, getMarketStatus])
 
     // Fetch company announcements and info when selection changes
     useEffect(() => {
@@ -315,7 +419,7 @@ export default function AnnouncementsPage() {
         setCompanyInfo(null)
       })
     return () => ctrl.abort()
-  }, [selected?.scripCode, selected?.company, selected?.ticker, announcements])
+  }, [selected?.scripCode, selected?.company, selected?.ticker, selected?.id, announcements])
 
   // Get local AI summary & verdict for announcement (with caching)
   const getLocalSummary = useCallback((a: BSEAnnouncement): AISummary => {
@@ -635,17 +739,13 @@ export default function AnnouncementsPage() {
                         </div>
                         
                         <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-                          {/* Category chip */}
-                          <span className={clsx("text-[10px] px-1.5 py-0.5 rounded font-medium", CATEGORY_COLORS[a.category] || "bg-zinc-500/15 text-zinc-400")}>
-                            {a.category}
-                          </span>
-                          {/* Verdict indicator */}
-                          {verdict && verdict !== 'neutral' && (
-                            <span className={clsx("text-[10px] font-medium", verdictColors[verdict] || 'text-zinc-400')}>
-                              {verdict === 'strong_positive' ? '▲▲' : verdict === 'positive' ? '▲' : verdict === 'negative' ? '▼' : verdict === 'strong_negative' ? '▼▼' : '◆'}
+                            {/* Category chip */}
+                            <span className={clsx("text-[10px] px-1.5 py-0.5 rounded font-medium", CATEGORY_COLORS[a.category] || "bg-zinc-500/15 text-zinc-400")}>
+                              {a.category}
                             </span>
-                          )}
-                        </div>
+                            {/* Sentiment Badge - Compact */}
+                            <SentimentBadge text={`${a.headline} ${a.summary}`} compact showRisk />
+                          </div>
                         
                         <p className="text-[11px] text-zinc-400 line-clamp-2 leading-relaxed">{a.headline}</p>
                       </div>
@@ -694,24 +794,37 @@ export default function AnnouncementsPage() {
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="text-xs text-zinc-400 mb-0.5">{selected.company}</div>
-                      <div className="flex items-center gap-3">
-                        <h1 className="text-2xl font-bold gradient-text">{selected.ticker}</h1>
-                        {quote && quote.price != null && (
-                          <div className="flex items-center gap-2">
-                            <span className="text-xl font-semibold text-white tabular-nums">₹{quote.price.toLocaleString()}</span>
-                            {typeof quote.changePercent === "number" && (
-                              <span className={clsx(
-                                "flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold",
-                                quote.changePercent >= 0 ? "badge-positive" : "badge-negative"
-                              )}>
-                                {quote.changePercent >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                                {quote.changePercent >= 0 ? "+" : ""}{quote.changePercent.toFixed(2)}%
-                              </span>
-                            )}
-                          </div>
-                        )}
-                        {quoteLoading && <span className="text-xs text-zinc-500 animate-pulse">Loading...</span>}
-                      </div>
+                        <div className="flex items-center gap-3">
+                          <h1 className="text-2xl font-bold gradient-text">{selected.ticker}</h1>
+                          {quote && quote.price != null && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-xl font-semibold text-white tabular-nums">₹{quote.price.toLocaleString()}</span>
+                              {typeof quote.changePercent === "number" && (
+                                <span className={clsx(
+                                  "flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold",
+                                  quote.changePercent >= 0 ? "badge-positive" : "badge-negative"
+                                )}>
+                                  {quote.changePercent >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                                  {quote.changePercent >= 0 ? "+" : ""}{quote.changePercent.toFixed(2)}%
+                                </span>
+                              )}
+                              
+                              {/* Small Refresh Button for Quote */}
+                              <button
+                                onClick={() => fetchCurrentQuote(selected.scripCode, selected.id, selected.time)}
+                                disabled={quoteLoading}
+                                className={clsx(
+                                  "p-1 rounded-md hover:bg-white/10 text-zinc-500 hover:text-cyan-400 transition-all",
+                                  quoteLoading && "opacity-50 cursor-not-allowed"
+                                )}
+                                title="Refresh Price"
+                              >
+                                <RefreshCw className={clsx("h-3 w-3", quoteLoading && "animate-spin")} />
+                              </button>
+                            </div>
+                          )}
+                          {quoteLoading && !quote && <span className="text-xs text-zinc-500 animate-pulse">Loading...</span>}
+                        </div>
                       
                             {/* Links Row */}
                             <div className="flex items-center gap-2 mt-2 flex-wrap">
@@ -851,17 +964,22 @@ export default function AnnouncementsPage() {
                   </div>
                 </div>
 
-                {/* AI Summary Panel */}
-                <AISummaryPanel
+                  {/* Risk Alert - Shows for critical/high risk announcements */}
+                  <RiskAlert text={`${selected.headline} ${selected.summary}`} />
+
+                  {/* AI Summary Panel */}
+                  <AISummaryPanel
                   headline={selected.headline}
                   summary={selected.summary}
                   category={selected.category}
                   subCategory={selected.subCategory}
                   announcementId={selected.id}
                   pdfUrl={selected.pdfUrl}
-                  time={selected.time}
-                  ticker={selected.ticker}
-                  company={selected.company}
+                    time={selected.time}
+                    ticker={selected.ticker}
+                    scripCode={selected.scripCode}
+                    company={selected.company}
+
                   impact={selected.impact}
                   onFullScreenChat={() => {
                     setOpenChatMaximized(true)
@@ -1000,43 +1118,51 @@ export default function AnnouncementsPage() {
                   </div>
                 </details>
 
-                {/* Price & Change Since Announcement */}
-                <details className="glass-card rounded-2xl" open>
-                  <summary className="flex items-center justify-between p-4 cursor-pointer hover:bg-white/5 transition-colors list-none">
-                    <h3 className="font-semibold text-white flex items-center gap-2 text-sm">
-                      <Zap className="h-4 w-4 text-cyan-400" />
-                      Price & Change
-                    </h3>
-                    <span className={clsx(
-                      "px-2 py-0.5 rounded-md text-[10px] font-medium",
-                      new Date().getHours() >= 9 && new Date().getHours() < 16 
-                        ? "bg-emerald-500/20 text-emerald-400" 
-                        : "bg-rose-500/20 text-rose-400"
-                    )}>
-                      {new Date().getHours() >= 9 && new Date().getHours() < 16 ? "Market Open" : "Market Closed"}
-                    </span>
-                  </summary>
-                    <div className="px-4 pb-4">
+                  {/* Price & Change Since Announcement */}
+                  <details className="glass-card rounded-2xl" open>
+                    <summary className="flex items-center justify-between p-4 cursor-pointer hover:bg-white/5 transition-colors list-none">
+                      <h3 className="font-semibold text-white flex items-center gap-2 text-sm">
+                        <Zap className="h-4 w-4 text-cyan-400" />
+                        Price & Performance
+                      </h3>
+                      <div className="flex items-center gap-2">
+                        {quoteLoading && <RefreshCw className="h-3 w-3 animate-spin text-zinc-500" />}
+                        <span className={clsx(
+                          "px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors",
+                          market.bg, market.color
+                        )}>
+                          {market.label}
+                        </span>
+                      </div>
+                    </summary>
+                      <div className="px-4 pb-4">
                         {/* Price at Announcement vs Current */}
                         <div className="grid grid-cols-2 gap-4 mb-4">
-                          <div className="bg-white/5 rounded-xl p-3">
-                            <div className="text-[10px] text-zinc-500 mb-1">Price at News</div>
+                          <div className="bg-white/5 rounded-xl p-3 border border-white/5">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="text-[10px] text-zinc-500">Price at News</div>
+                              <Clock className="h-2.5 w-2.5 text-zinc-600" />
+                            </div>
                             <div className="text-xl font-bold text-white tabular-nums">
                               {priceAtAnnouncement 
                                 ? `₹${priceAtAnnouncement.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
                                 : "—"
                               }
                             </div>
-                            <div className="text-[10px] text-cyan-400 mt-1">
+                            <div className="text-[10px] text-cyan-400 mt-1 flex items-center gap-1">
+                              <span className="w-1 h-1 rounded-full bg-cyan-400" />
                               {(() => {
                                 const annDate = new Date(selected.time)
-                                const isPostMarket = annDate.getHours() >= 15 || annDate.getHours() < 9
+                                const isPostMarket = annDate.getHours() >= 15 || (annDate.getHours() < 9 || (annDate.getHours() === 9 && annDate.getMinutes() < 15))
                                 return isPostMarket ? "Post Market Announcement" : "During Market Hours"
                               })()}
                             </div>
                           </div>
-                          <div className="bg-white/5 rounded-xl p-3">
-                            <div className="text-[10px] text-zinc-500 mb-1">Alpha Since News</div>
+                          <div className="bg-white/5 rounded-xl p-3 border border-white/5">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="text-[10px] text-zinc-500">Alpha Since News</div>
+                              <TrendingUp className="h-2.5 w-2.5 text-zinc-600" />
+                            </div>
                             {priceAtAnnouncement && quote?.price ? (
                               <>
                                 {(() => {
@@ -1067,63 +1193,96 @@ export default function AnnouncementsPage() {
                             )}
                           </div>
                         </div>
-                      
-                      {/* Day Stats */}
-                      <div className="grid grid-cols-3 gap-3 mb-4">
-                        <div className="text-center">
-                          <div className="text-[10px] text-zinc-500 mb-0.5">Current</div>
-                          <div className="text-base font-semibold text-cyan-400 tabular-nums">
-                            ₹{quote?.price?.toLocaleString() || "—"}
-                          </div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-[10px] text-zinc-500 mb-0.5">Day High</div>
-                          <div className="text-base font-semibold text-emerald-400 tabular-nums">
-                            ₹{quote?.dayHigh?.toLocaleString() || "—"}
-                          </div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-[10px] text-zinc-500 mb-0.5">Day Low</div>
-                          <div className="text-base font-semibold text-rose-400 tabular-nums">
-                            ₹{quote?.dayLow?.toLocaleString() || "—"}
-                          </div>
-                        </div>
-                      </div>
-                      
-                      {/* Interactive AI Events Overlay */}
-                      <div className="relative group">
-                        <TradingViewChart
-                          symbol={companyInfo?.tradingViewSymbol || selected.ticker}
-                          exchange="BSE"
-                          height={260}
-                          fallbackMessage={`Chart unavailable for ${companyInfo?.companyName || selected.company}`}
-                        />
                         
-                        {/* Event Markers Overlay (Conceptual Fey.ai Style) */}
-                        <div className="absolute top-2 right-2 flex flex-col gap-1 pointer-events-none">
-                          {companyAnnouncements.slice(0, 3).map((ann, i) => (
-                            <div 
-                              key={ann.id}
-                              className="animate-in fade-in slide-in-from-right-2 duration-500"
-                              style={{ animationDelay: `${i * 150}ms` }}
-                            >
-                              <div className="px-2 py-1 rounded-md bg-zinc-900/90 backdrop-blur-md border border-white/10 flex items-center gap-2 shadow-xl pointer-events-auto cursor-help group/ann" title={ann.headline}>
-                                <div className={clsx(
-                                  "w-1.5 h-1.5 rounded-full shrink-0",
-                                  ann.impact === 'high' ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]" : 
-                                  ann.impact === 'medium' ? "bg-amber-400" : "bg-zinc-400"
-                                )} />
-                                <span className="text-[9px] font-medium text-zinc-300 group-hover/ann:text-white transition-colors truncate max-w-[100px]">
-                                  {ann.category}
-                                </span>
-                                <span className="text-[8px] text-zinc-500">{formatDate(ann.time)}</span>
+                        {/* Day Stats with Live Tag */}
+                        <div className="bg-zinc-900/50 rounded-xl p-3 border border-white/5 mb-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">Live Market Feed (BSE)</div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="relative flex h-2 w-2">
+                                <span className={clsx("animate-ping absolute inline-flex h-full w-full rounded-full opacity-75", market.status === 'Open' ? "bg-emerald-400" : "bg-zinc-400")}></span>
+                                <span className={clsx("relative inline-flex rounded-full h-2 w-2", market.status === 'Open' ? "bg-emerald-500" : "bg-zinc-500")}></span>
+                              </span>
+                              <span className="text-[9px] text-zinc-500 font-medium">Synced</span>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-3 gap-3">
+                            <div className="text-center">
+                              <div className="text-[10px] text-zinc-500 mb-0.5">Current</div>
+                              <div className="text-base font-semibold text-white tabular-nums">
+                                ₹{quote?.price?.toLocaleString() || "—"}
                               </div>
                             </div>
-                          ))}
+                            <div className="text-center border-x border-white/5">
+                              <div className="text-[10px] text-zinc-500 mb-0.5">Day High</div>
+                              <div className="text-base font-semibold text-emerald-400/90 tabular-nums">
+                                ₹{quote?.dayHigh?.toLocaleString() || "—"}
+                              </div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-[10px] text-zinc-500 mb-0.5">Day Low</div>
+                              <div className="text-base font-semibold text-rose-400/90 tabular-nums">
+                                ₹{quote?.dayLow?.toLocaleString() || "—"}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* TradingView Chart Container */}
+                        <div className="relative group">
+                          <div className="mb-2 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <BarChart2 className="h-3.5 w-3.5 text-zinc-500" />
+                              <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider">Technical Chart</span>
+                            </div>
+                            {market.status === 'Closed' && (
+                              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">
+                                <Clock className="h-2.5 w-2.5 text-amber-500" />
+                                <span className="text-[9px] text-amber-500 font-medium">Last Session: {market.label === 'Weekend' ? 'Friday' : 'Earlier'}</span>
+                              </div>
+                            )}
+                          </div>
+                          
+                            <div className="relative rounded-xl overflow-hidden border border-white/5">
+                                  <LightweightChart
+                                    symbol={companyInfo?.symbol || selected.ticker}
+                                    scripCode={selected.scripCode}
+                                    exchange="BSE"
+                                    height={400}
+                                    targetDate={selected.time}
+                                    type="area"
+                                    announcements={companyAnnouncements}
+                                    highlightedAnnouncementId={selectedId}
+                                  />
+
+                              
+                              {/* Event Markers Overlay */}
+                            <div className="absolute top-2 right-2 flex flex-col gap-1 pointer-events-none">
+                              {companyAnnouncements.slice(0, 3).map((ann, i) => (
+                                <div 
+                                  key={ann.id}
+                                  className="animate-in fade-in slide-in-from-right-2 duration-500"
+                                  style={{ animationDelay: `${i * 150}ms` }}
+                                >
+                                  <div className="px-2 py-1 rounded-md bg-zinc-900/90 backdrop-blur-md border border-white/10 flex items-center gap-2 shadow-xl pointer-events-auto cursor-help group/ann" title={ann.headline}>
+                                    <div className={clsx(
+                                      "w-1.5 h-1.5 rounded-full shrink-0",
+                                      ann.impact === 'high' ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]" : 
+                                      ann.impact === 'medium' ? "bg-amber-400" : "bg-zinc-400"
+                                    )} />
+                                    <span className="text-[9px] font-medium text-zinc-300 group-hover/ann:text-white transition-colors truncate max-w-[100px]">
+                                      {ann.category}
+                                    </span>
+                                    <span className="text-[8px] text-zinc-500">{formatDate(ann.time)}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                </details>
+                  </details>
+
               </div>
             ) : (
               <div className="h-full flex items-center justify-center">

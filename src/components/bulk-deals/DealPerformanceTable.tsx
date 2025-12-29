@@ -49,7 +49,7 @@ function clsx(...v: (string | false | undefined)[]) {
 
 function QuoteComparisonModal({ deal, onClose }: { deal: DealWithPerformance; onClose: () => void }) {
   const isBuy = deal.side?.toUpperCase() === "BUY"
-  const hasQuote = deal.currentPrice !== null && deal.currentPrice !== undefined
+  const hasQuote = deal.currentPrice != null && isFinite(deal.currentPrice)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
@@ -327,8 +327,8 @@ function QuoteComparisonModal({ deal, onClose }: { deal: DealWithPerformance; on
         <div className="sm:hidden divide-y divide-white/5">
           {sortedDeals.length > 0 ? (
             sortedDeals.slice(0, 20).map((deal, i) => {
-              const isBuy = deal.side?.toUpperCase() === "BUY"
-              const hasQuote = deal.currentPrice !== null
+                const isBuy = deal.side?.toUpperCase() === "BUY"
+                const hasQuote = deal.currentPrice != null && isFinite(deal.currentPrice)
               
               return (
                   <div 
@@ -387,11 +387,11 @@ function QuoteComparisonModal({ deal, onClose }: { deal: DealWithPerformance; on
                 <th className="text-center py-3 px-4 text-xs font-semibold text-zinc-400"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
-              {sortedDeals.length > 0 ? (
-                sortedDeals.slice(0, 30).map((deal, i) => {
-                  const isBuy = deal.side?.toUpperCase() === "BUY"
-                  const hasQuote = deal.currentPrice !== null
+              <tbody className="divide-y divide-white/5">
+                {sortedDeals.length > 0 ? (
+                  sortedDeals.slice(0, 30).map((deal, i) => {
+                    const isBuy = deal.side?.toUpperCase() === "BUY"
+                    const hasQuote = deal.currentPrice != null && isFinite(deal.currentPrice)
                   
                   return (
                     <tr 
@@ -420,9 +420,11 @@ function QuoteComparisonModal({ deal, onClose }: { deal: DealWithPerformance; on
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right text-sm text-white">₹{deal.price?.toFixed(2)}</td>
-                      <td className="py-3 px-4 text-right text-sm text-cyan-400">
-                        {hasQuote ? `₹${deal.currentPrice?.toFixed(2)}` : "-"}
-                      </td>
+                        <td className="py-3 px-4 text-right text-sm text-cyan-400">
+                          {hasQuote && deal.currentPrice != null && isFinite(deal.currentPrice) 
+                            ? `₹${deal.currentPrice.toFixed(2)}` 
+                            : <span className="text-zinc-500 text-xs">Loading...</span>}
+                        </td>
                       <td className="py-3 px-4 text-right">
                         {hasQuote ? (
                           <span className={clsx(

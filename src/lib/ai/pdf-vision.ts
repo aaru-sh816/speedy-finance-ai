@@ -1,5 +1,24 @@
 import { chunkPages, embedTexts } from "./vector"
 
+// Suppress pdf2json internal warnings globally - must be FIRST
+const originalConsoleWarn = console.warn
+const originalConsoleError = console.error
+const suppressedPatterns = [
+  'TT:', 'fake worker', 'undefined function', 'invalid function',
+  'Unsupported:', 'NOT valid', 'complementing', 'TODO:', 'SMask',
+  'pdf2json', 'pdfParser', 'Setting up'
+]
+console.warn = (...args: any[]) => {
+  const msg = args[0]?.toString() || ''
+  if (suppressedPatterns.some(p => msg.includes(p))) return
+  originalConsoleWarn.apply(console, args)
+}
+console.error = (...args: any[]) => {
+  const msg = args[0]?.toString() || ''
+  if (suppressedPatterns.some(p => msg.includes(p))) return
+  originalConsoleError.apply(console, args)
+}
+
 interface ExtractedEntity {
   type: "person" | "amount" | "date" | "company" | "shares" | "percentage"
   value: string
@@ -211,14 +230,6 @@ async function extractWithGPT4oVision(
   _openaiKey: string
 ): Promise<{ text: string; analysis: string } | null> {
   return null
-}
-
-// Suppress pdf2json internal warnings globally
-const originalConsoleWarn = console.warn
-console.warn = (...args: any[]) => {
-  const msg = args[0]?.toString() || ''
-  if (msg.includes('TT:') || msg.includes('fake worker') || msg.includes('undefined function')) return
-  originalConsoleWarn.apply(console, args)
 }
 
 export async function extractPdfWithVision(

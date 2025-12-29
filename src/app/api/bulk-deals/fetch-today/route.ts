@@ -3,7 +3,7 @@ import { NextResponse } from "next/server"
 export const dynamic = "force-dynamic"
 
 export async function POST() {
-  const bseServiceUrl = process.env.BSE_SERVICE_URL || "http://localhost:5000"
+  const bseServiceUrl = process.env.BSE_SERVICE_URL || "http://localhost:8080"
   
   try {
     const response = await fetch(`${bseServiceUrl}/api/bulk-deals/database/fetch-today`, {

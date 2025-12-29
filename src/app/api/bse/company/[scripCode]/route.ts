@@ -56,9 +56,14 @@ const SCRIP_TO_SYMBOL: Record<string, { symbol: string; name: string }> = {
   "532977": { symbol: "BAJAJ-AUTO", name: "Bajaj Auto Ltd." },
   "532187": { symbol: "INDUSINDBK", name: "IndusInd Bank Ltd." },
   "500825": { symbol: "BRITANNIA", name: "Britannia Industries Ltd." },
-  "508869": { symbol: "APOLLOHOSP", name: "Apollo Hospitals Enterprise Ltd." },
-  "500440": { symbol: "HINDALCO", name: "Hindalco Industries Ltd." },
-}
+    "508869": { symbol: "APOLLOHOSP", name: "Apollo Hospitals Enterprise Ltd." },
+    "500440": { symbol: "HINDALCO", name: "Hindalco Industries Ltd." },
+    "544322": { symbol: "UNIMECH", name: "Unimech Aerospace and Manufacturing Ltd." },
+    "532915": { symbol: "BALUFORGE", name: "Balu Forge Industries Ltd." },
+    "543320": { symbol: "ZOMATO", name: "Zomato Ltd." },
+    "543232": { symbol: "NYKAA", name: "FSN E-Commerce Ventures Ltd." },
+    "543245": { symbol: "ANGELONE", name: "Angel One Ltd." },
+  }
 
 // BSE API headers
 const HEADERS = {
@@ -190,6 +195,33 @@ async function lookupSymbol(scripCode: string) {
   }
 }
 
+// Helper to get symbol from Python service
+async function getSymbolFromPythonService(scripCode: string): Promise<{symbol: string, name: string} | null> {
+  try {
+    const BSE_SERVICE_URL = process.env.BSE_SERVICE_URL || 'http://localhost:8080'
+    const res = await fetch(`${BSE_SERVICE_URL}/api/quote/${scripCode}`, {
+      method: "GET",
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000)
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    if (!data.success || !data.data) return null
+    
+    // bsedata returns securityID which is the BSE symbol
+    const symbol = data.data.securityID || data.data.scripId || data.data.companyName?.split(' ')[0]
+    if (symbol && /^[A-Z0-9&-]+$/i.test(symbol)) {
+      return {
+        symbol: symbol.toUpperCase(),
+        name: data.data.companyName || `${symbol} Ltd`
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ scripCode: string }> }
@@ -230,40 +262,58 @@ export async function GET(
         lastPrice: companyInfo?.lastPrice || null,
       }
     } else if (!companyInfo || !companyInfo.symbol || companyInfo.symbol === scripCode) {
-      // Fallback 1: Resolve via BSE ListofScripData (gives scrip_id and Scrip_Name)
-      const listInfo = await fetchScripFromList(scripCode)
-      if (listInfo?.symbol) {
-        tradingViewSymbol = listInfo.tradingViewSymbol || null
-        companyInfo = {
-          scripCode,
-          symbol: listInfo.symbol,
-          companyName: listInfo.companyName || `Company ${scripCode}`,
-          industry: companyInfo?.industry || "",
-          sector: companyInfo?.sector || "",
-          group: listInfo.group || companyInfo?.group || "",
-          faceValue: companyInfo?.faceValue || null,
-          isin: listInfo.isin || companyInfo?.isin || "",
-          marketCap: companyInfo?.marketCap || null,
-          lastPrice: companyInfo?.lastPrice || null,
+        // Fallback 1: Resolve via BSE ListofScripData (gives scrip_id and Scrip_Name)
+        const listInfo = await fetchScripFromList(scripCode)
+        if (listInfo?.symbol) {
+          tradingViewSymbol = listInfo.tradingViewSymbol || null
+          companyInfo = {
+            scripCode,
+            symbol: listInfo.symbol,
+            companyName: listInfo.companyName || `Company ${scripCode}`,
+            industry: companyInfo?.industry || "",
+            sector: companyInfo?.sector || "",
+            group: listInfo.group || companyInfo?.group || "",
+            faceValue: companyInfo?.faceValue || null,
+            isin: listInfo.isin || companyInfo?.isin || "",
+            marketCap: companyInfo?.marketCap || null,
+            lastPrice: companyInfo?.lastPrice || null,
+          }
+        } else {
+          // Fallback 1.5: Try Python Service
+          const pythonInfo = await getSymbolFromPythonService(scripCode)
+          if (pythonInfo) {
+            tradingViewSymbol = pythonInfo.symbol
+            companyInfo = {
+              scripCode,
+              symbol: pythonInfo.symbol,
+              companyName: pythonInfo.name,
+              industry: companyInfo?.industry || "",
+              sector: companyInfo?.sector || "",
+              group: companyInfo?.group || "",
+              faceValue: companyInfo?.faceValue || null,
+              isin: companyInfo?.isin || "",
+              marketCap: companyInfo?.marketCap || null,
+              lastPrice: companyInfo?.lastPrice || null,
+            }
+          } else {
+            // Fallback 2: HTML lookup as last resort
+            const symbol = await lookupSymbol(scripCode)
+            // Validate if the looked up symbol is TradingView compatible
+            tradingViewSymbol = symbol && /^[A-Z0-9&-]+$/i.test(symbol) ? symbol.toUpperCase() : null
+            companyInfo = {
+              scripCode,
+              symbol: symbol || scripCode,
+              companyName: symbol ? `${symbol} Ltd` : `Company ${scripCode}`,
+              industry: companyInfo?.industry || "",
+              sector: companyInfo?.sector || "",
+              group: companyInfo?.group || "",
+              faceValue: companyInfo?.faceValue || null,
+              isin: companyInfo?.isin || "",
+              marketCap: companyInfo?.marketCap || null,
+              lastPrice: companyInfo?.lastPrice || null,
+            }
+          }
         }
-      } else {
-        // Fallback 2: HTML lookup as last resort
-        const symbol = await lookupSymbol(scripCode)
-        // Validate if the looked up symbol is TradingView compatible
-        tradingViewSymbol = symbol && /^[A-Z0-9&-]+$/i.test(symbol) ? symbol.toUpperCase() : null
-        companyInfo = {
-          scripCode,
-          symbol: symbol || scripCode,
-          companyName: symbol ? `${symbol} Ltd` : `Company ${scripCode}`,
-          industry: companyInfo?.industry || "",
-          sector: companyInfo?.sector || "",
-          group: companyInfo?.group || "",
-          faceValue: companyInfo?.faceValue || null,
-          isin: companyInfo?.isin || "",
-          marketCap: companyInfo?.marketCap || null,
-          lastPrice: companyInfo?.lastPrice || null,
-        }
-      }
     } else {
       // Check if existing symbol is TradingView compatible
       const sym = companyInfo.symbol

@@ -18,6 +18,7 @@ import io
 import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from collections import OrderedDict
+from bulk_deals_database import BulkDealsDatabase, create_database_api
 
 logging.basicConfig(
     level=logging.INFO,
@@ -118,28 +119,15 @@ except ImportError:
     BSE_AVAILABLE = False
     logger.warning("bsedata not available - market data endpoints disabled")
 
-DATABASE_PATH = os.path.join(os.path.dirname(__file__), 'data', 'bulk-deals', 'bulk_deals_database.json')
-_db_cache = None
-_db_cache_time = None
-DB_CACHE_TTL = 300
+# Initialize Bulk Deals Database
+db_manager = BulkDealsDatabase()
+create_database_api(app, db_manager)
 
 def load_database():
-    global _db_cache, _db_cache_time
-    if _db_cache is not None and _db_cache_time is not None:
-        if time.time() - _db_cache_time < DB_CACHE_TTL:
-            return _db_cache
-    
-    if os.path.exists(DATABASE_PATH):
-        with open(DATABASE_PATH, 'r') as f:
-            _db_cache = json.load(f)
-            _db_cache_time = time.time()
-            return _db_cache
-    return {'deals': [], 'metadata': {}}
+    return db_manager.database
 
 def invalidate_db_cache():
-    global _db_cache, _db_cache_time
-    _db_cache = None
-    _db_cache_time = None
+    pass # Managed by BulkDealsDatabase
 
 @app.route('/', methods=['GET'])
 def root():
@@ -402,53 +390,6 @@ def get_announcements():
             'from_date': from_date,
             'to_date': to_date
         }
-    })
-
-@app.route('/api/bulk-deals/database', methods=['GET'])
-@rate_limit(max_requests=60, window_seconds=60)
-def get_database_deals():
-    db = load_database()
-    deals = db.get('deals', [])
-    
-    start_date = request.args.get('start')
-    end_date = request.args.get('end')
-    exchange = request.args.get('exchange')
-    scrip_code = request.args.get('scrip_code')
-    client_name = request.args.get('client')
-    deal_type = request.args.get('type')
-    min_value = request.args.get('min_value', type=float)
-    limit = request.args.get('limit', type=int, default=500)
-    offset = request.args.get('offset', type=int, default=0)
-    
-    if start_date:
-        deals = [d for d in deals if d.get('date', '') >= start_date]
-    if end_date:
-        deals = [d for d in deals if d.get('date', '') <= end_date]
-    if exchange:
-        deals = [d for d in deals if d.get('exchange', '').upper() == exchange.upper()]
-    if scrip_code:
-        deals = [d for d in deals if str(d.get('scripCode', '')) == str(scrip_code)]
-    if client_name:
-        deals = [d for d in deals if client_name.lower() in d.get('clientName', '').lower()]
-    if deal_type:
-        deals = [d for d in deals if d.get('dealType', '').upper() == deal_type.upper()]
-    if min_value:
-        deals = [d for d in deals if d.get('value', 0) >= min_value]
-    
-    total_count = len(deals)
-    deals = deals[offset:offset + limit]
-    
-    return jsonify({
-        'success': True,
-        'deals': deals,
-        'count': len(deals),
-        'total_count': total_count,
-        'pagination': {
-            'limit': limit,
-            'offset': offset,
-            'has_more': offset + len(deals) < total_count
-        },
-        'metadata': db.get('metadata', {})
     })
 
 @app.route('/api/bulk-deals/stats', methods=['GET'])

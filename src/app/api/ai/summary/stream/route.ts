@@ -20,9 +20,15 @@ async function extractPdfText(pdfUrl: string): Promise<string> {
     try {
       const pdfjsLib: any = await import("pdfjs-dist")
       if (pdfjsLib?.GlobalWorkerOptions) {
-        try { (pdfjsLib.GlobalWorkerOptions as any).workerSrc = undefined } catch {}
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`
       }
-      const task = pdfjsLib.getDocument({ data, disableWorker: true })
+      const task = pdfjsLib.getDocument({ 
+        data, 
+        useWorkerFetch: false,
+        isEvalSupported: false,
+        useSystemFonts: true,
+        verbosity: 0
+      })
       const pdf = await task.promise
       const maxPages = Math.min(pdf.numPages, 20)
       const parts: string[] = []

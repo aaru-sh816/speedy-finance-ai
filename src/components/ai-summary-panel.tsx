@@ -1,5 +1,6 @@
 "use client"
 
+// AI Summary Panel
 import { useState, useEffect, useRef } from "react"
 import { 
   type VerdictType, 
@@ -11,7 +12,21 @@ import {
 } from "@/lib/ai/verdict"
 import { getCategoryEmoji, getKeywordEmoji } from "@/lib/ai/summaryFormatter"
 import type { BSEImpact } from "@/lib/bse/types"
-import { RefreshCw, FileText, Sparkles, CheckCircle, XCircle, Loader2, Maximize2 } from "lucide-react"
+import { getMarketStatus } from "@/lib/bse/market-hours"
+import { 
+  RefreshCw, FileText, Sparkles, CheckCircle, XCircle, Loader2, Maximize2, 
+  TrendingUp, TrendingDown, Zap, HelpCircle, ChevronUp, ChevronDown,
+  BarChart2
+} from "lucide-react"
+import { motion, AnimatePresence } from "framer-motion"
+import { MarketDepth } from "./market-depth"
+import { Sparkline, generateMockSparklineData } from "./bulk-deals/Sparkline"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 interface Quote {
   currentPrice: number | null
@@ -20,6 +35,9 @@ interface Quote {
   changePercent?: number | null
   priceAtAnnouncement?: number | null
   alphaSinceAnnouncement?: number | null
+  dayHigh?: number | null
+  dayLow?: number | null
+  volume?: number | null
 }
 
 interface AISummaryPanelProps {
@@ -32,6 +50,7 @@ interface AISummaryPanelProps {
   onVerdictGenerated?: (verdict: VerdictType) => void
   time?: string
   ticker?: string
+  scripCode?: string
   company?: string
   impact?: BSEImpact
   onFullScreenChat?: () => void
@@ -74,6 +93,7 @@ export function AISummaryPanel({
   onVerdictGenerated,
   time,
   ticker,
+  scripCode,
   company,
   impact,
   onFullScreenChat,
@@ -81,14 +101,74 @@ export function AISummaryPanel({
 }: AISummaryPanelProps) {
   const [aiSummary, setAiSummary] = useState<AISummary | null>(null)
   const [loading, setLoading] = useState(true)
-  const [expanded, setExpanded] = useState(false)
+  const [isCollapsed, setIsCollapsed] = useState(false)
   const [pdfUsed, setPdfUsed] = useState(false)
   const [pdfAnalyzed, setPdfAnalyzed] = useState(false)
   const [generatedAt, setGeneratedAt] = useState<Date | null>(null)
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>("idle")
   const [source, setSource] = useState<string>("")
   const [isReanalyzing, setIsReanalyzing] = useState(false)
+  const [realDepth, setRealDepth] = useState<any>(null)
+  const [isMarketOpen, setIsMarketOpen] = useState(true)
+  const [depthFetchFailed, setDepthFetchFailed] = useState(false)
+  const [marketDepthUserExpanded, setMarketDepthUserExpanded] = useState(false)
   const streamRef = useRef<EventSource | null>(null)
+
+  // Check market hours
+  useEffect(() => {
+    const checkMarketHours = () => {
+      const status = getMarketStatus();
+      setIsMarketOpen(status.isOpen);
+    };
+
+    checkMarketHours();
+    const interval = setInterval(checkMarketHours, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch real market depth
+  useEffect(() => {
+    const code = scripCode || ticker
+    if (!code || !isMarketOpen || depthFetchFailed) return
+
+    const fetchDepth = async () => {
+      try {
+        // Only fetch if it looks like a BSE scrip code (6 digits)
+        const isScripCode = /^\d{6}$/.test(code)
+        if (!isScripCode) return
+
+        const res = await fetch(`/api/bse/enhanced-quote?scripCode=${code}`)
+        if (!res.ok) {
+          if (res.status === 404 || res.status === 400) {
+            setDepthFetchFailed(true)
+          }
+          throw new Error(`HTTP error! status: ${res.status}`)
+        }
+        
+        const json = await res.json()
+        if (json.success && json.data) {
+          setRealDepth({
+            buy: json.data.buy || {},
+            sell: json.data.sell || {}
+          })
+          setDepthFetchFailed(false)
+        } else {
+          // If response is successful but no data, mark as failed for this scrip
+          setDepthFetchFailed(true)
+        }
+      } catch (e) {
+        // Silently fail to avoid console noise
+      }
+    }
+
+    fetchDepth()
+    const interval = setInterval(() => {
+      if (isMarketOpen && !depthFetchFailed) {
+        fetchDepth()
+      }
+    }, 10000)
+    return () => clearInterval(interval)
+  }, [ticker, scripCode, isMarketOpen, depthFetchFailed])
 
   const escapeHtml = (s: string) =>
     s
@@ -290,10 +370,10 @@ export function AISummaryPanel({
 
   if (!aiSummary) return null
 
-  const verdictColor = getVerdictColor(aiSummary.verdict.type)
-  const verdictLabel = getVerdictLabel(aiSummary.verdict.type)
-  const verdictIcon = getVerdictIcon(aiSummary.verdict.type)
-  const verdictBg = getVerdictBgColor(aiSummary.verdict.type)
+    const verdictColor = getVerdictColor(aiSummary.verdict.type, aiSummary.verdict.confidence)
+    const verdictLabel = getVerdictLabel(aiSummary.verdict.type)
+    const verdictIcon = getVerdictIcon(aiSummary.verdict.type)
+    const verdictBg = getVerdictBgColor(aiSummary.verdict.type, aiSummary.verdict.confidence)
 
   const generatedLabel = generatedAt
     ? generatedAt.toLocaleTimeString("en-IN", {
@@ -333,6 +413,15 @@ export function AISummaryPanel({
           {generatedLabel && (
             <span className="text-[11px] text-zinc-500">{generatedLabel}</span>
           )}
+          {/* Collapse Toggle */}
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] font-medium text-zinc-400 hover:text-white transition-all"
+          >
+            {isCollapsed ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+            <span>{isCollapsed ? "Expand Analysis" : "Collapse"}</span>
+          </button>
+
           {/* Re-analyze Button */}
           <button
             onClick={handleReanalyze}
@@ -345,67 +434,131 @@ export function AISummaryPanel({
           </button>
         </div>
       </div>
-      {/* Verdict Badge */}
-      <div className="glass-card rounded-2xl p-5" style={{ borderColor: `${verdictColor}30` }}>
-        <div className="flex items-center gap-4">
-          <div 
-            className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
-            style={{ backgroundColor: `${verdictColor}15` }}
+      
+      <AnimatePresence>
+        {!isCollapsed && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: "easeInOut" }}
+            className="space-y-4 overflow-hidden"
           >
-            {verdictIcon}
-          </div>
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-sm text-zinc-400">Verdict :</span>
-              <span 
-                className="font-bold text-lg"
-                style={{ color: verdictColor }}
-              >
-                {verdictLabel}
-              </span>
+            {/* Verdict Badge */}
+        <div className="glass-card rounded-2xl p-5" style={{ borderColor: `${verdictColor}30` }}>
+          <div className="flex items-center gap-4">
+            <div 
+              className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
+              style={{ backgroundColor: `${verdictColor}15` }}
+            >
+              {verdictIcon}
             </div>
-            <p className="text-sm text-zinc-400 leading-relaxed">
-              {aiSummary.verdict.reasoning}
-            </p>
-          </div>
-          <div className="text-right">
-            <div className="text-xs text-zinc-500">Confidence</div>
-            <div className="text-lg font-semibold" style={{ color: verdictColor }}>
-              {aiSummary.verdict.confidence}%
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-sm text-zinc-400">Verdict :</span>
+                <span 
+                  className="font-bold text-lg"
+                  style={{ color: verdictColor }}
+                >
+                  {verdictLabel}
+                </span>
+              </div>
+              <p className="text-sm text-zinc-400 leading-relaxed">
+                {aiSummary.verdict.reasoning}
+              </p>
+            </div>
+            <div className="text-right">
+              <div className="flex items-center justify-end gap-1 mb-0.5">
+                <span className="text-xs text-zinc-500">Confidence</span>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <HelpCircle className="h-3 w-3 text-zinc-600 hover:text-zinc-400 cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[200px] text-[10px] leading-snug">
+                      Speedy AI performs a deep analysis of the full text and PDF, whereas the sidebar uses fast keyword matching. This panel provides the most accurate institutional-grade confidence score.
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+              <div className="text-lg font-semibold" style={{ color: verdictColor }}>
+                {aiSummary.verdict.confidence}%
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* News Summary */}
-      <div className="glass-card rounded-2xl p-5">
-        {(ticker || company) && (
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2 min-w-0">
-              {ticker && (
-                <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[11px] text-zinc-200">
-                  {ticker}
-                </span>
+              {isMarketOpen && (
+                <div className="glass-card rounded-2xl p-4 overflow-hidden relative isolate transition-all">
+                  <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none -z-10">
+                    <TrendingUp className="h-8 w-8 text-emerald-500" />
+                  </div>
+                  
+                  <button 
+                    onClick={() => setMarketDepthUserExpanded(!marketDepthUserExpanded)}
+                    className="w-full flex items-center justify-between text-xs font-semibold text-zinc-400 hover:text-white transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <BarChart2 className="h-4 w-4 text-cyan-400" />
+                      <span>Live Market Depth</span>
+                      {!marketDepthUserExpanded && (
+                         <span className="text-[10px] font-normal text-zinc-500 bg-white/5 px-2 py-0.5 rounded ml-2">Collapsed</span>
+                      )}
+                    </div>
+                    {marketDepthUserExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </button>
+
+                  <AnimatePresence>
+                    {marketDepthUserExpanded && (
+                      <motion.div 
+                        initial={{ height: 0, opacity: 0, marginTop: 0 }}
+                        animate={{ height: "auto", opacity: 1, marginTop: 16 }}
+                        exit={{ height: 0, opacity: 0, marginTop: 0 }}
+                        className="pt-4 border-t border-white/5 overflow-hidden"
+                      >
+                        <MarketDepth 
+                          scripCode={scripCode || ticker} 
+                          currentPrice={quote?.currentPrice ?? null} 
+                          realDepth={realDepth}
+                        />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               )}
-              {company && (
-                <span className="text-xs text-zinc-500 truncate max-w-[180px] md:max-w-xs">
-                  {company}
-                </span>
-              )}
+
+
+
+        {/* News Summary */}
+        <div className="glass-card rounded-2xl p-5">
+          {(ticker || company) && (
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2 min-w-0">
+                {ticker && (
+                  <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[11px] text-zinc-200">
+                    {ticker}
+                  </span>
+                )}
+                {company && (
+                  <span className="text-xs text-zinc-500 truncate max-w-[180px] md:max-w-xs">
+                    {company}
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-        )}
-        <div className="flex items-center justify-between mb-3">
+          )}
+          
+          <div className="flex items-center justify-between mb-3">
           <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
             <span className="text-lg">📝</span>
             <span>News summary</span>
           </h4>
           <div className="flex items-center gap-2">
             {/* Gap Up Alert */}
-              {quote?.previousClose && quote.currentPrice && quote.currentPrice > quote.previousClose && (
+                {quote?.previousClose && quote?.currentPrice && quote.currentPrice > quote.previousClose && (
                 <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-medium text-emerald-400">
                   <span>↑ Gap Up</span>
-                  <span>+{((quote.currentPrice - quote.previousClose) / quote.previousClose * 100).toFixed(1)}%</span>
+                  <span>+{(((quote?.currentPrice ?? 0) - (quote?.previousClose ?? 0)) / (quote?.previousClose ?? 1) * 100).toFixed(1)}%</span>
                 </div>
               )}
               {/* Price at Announcement Alpha */}
@@ -528,13 +681,16 @@ export function AISummaryPanel({
         </div>
       )}
 
-      {/* Disclaimer */}
-      <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
-        <span className="text-amber-500 text-sm">⚠</span>
-        <span className="text-[10px] text-amber-400/80">
-          Speedy AI-generated content may contain inaccuracies. Always verify with additional sources.
-        </span>
-      </div>
+        {/* Disclaimer */}
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
+          <span className="text-amber-500 text-sm">⚠</span>
+          <span className="text-[10px] text-amber-400/80">
+            Speedy AI-generated content may contain inaccuracies. Always verify with additional sources.
+          </span>
+        </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

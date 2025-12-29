@@ -33,10 +33,12 @@ export async function GET(request: NextRequest) {
     })
   } catch (error: any) {
     if (error.name === 'AbortError' || error.name === 'TimeoutError') {
-      console.warn(`Enhanced quote API timeout for ${scripCode}`)
+      // Reduced noise: log as info instead of warn for common timeouts
+      console.info(`Enhanced quote API timeout for ${scripCode}`)
       return NextResponse.json({ error: "Request timeout" }, { status: 504 })
     }
-    console.error(`Enhanced quote API error for ${scripCode}:`, error.message || error)
+    // Log as warning instead of error for individual quote failures
+    console.warn(`Enhanced quote API error for ${scripCode}:`, error.message || error)
     return NextResponse.json(
       { 
         error: "Failed to fetch enhanced quote",

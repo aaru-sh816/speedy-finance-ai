@@ -213,7 +213,7 @@ class BulkDealsDatabase:
         if added > 0:
             self._update_metadata()
             self._save_database()
-            print(f"✅ Added {added} new deals to database")
+            print(f"Added {added} new deals to database")
         
         return added
     
@@ -417,6 +417,172 @@ def create_database_api(app, db: BulkDealsDatabase):
     
     # Lock to prevent concurrent scraping
     _scraping_lock = {'active': False, 'last_fetch': None}
+    
+    @app.route('/api/bulk-deals/database/fetch-range', methods=['POST'])
+    def fetch_date_range():
+        """Fetch BSE bulk deals for a date range using CSV download"""
+        from datetime import datetime
+        import csv as csv_module
+        import tempfile
+        import os
+        
+        start_date = request.args.get('start') or request.json.get('start') if request.is_json else request.args.get('start')
+        end_date = request.args.get('end') or request.json.get('end') if request.is_json else request.args.get('end')
+        
+        if not start_date or not end_date:
+            return jsonify({
+                'success': False,
+                'error': 'start and end dates required (YYYY-MM-DD)'
+            }), 400
+        
+        try:
+            # Selenium-based fetch for date range
+            from selenium import webdriver
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            from selenium.webdriver.chrome.service import Service
+            from selenium.webdriver.chrome.options import Options
+            from webdriver_manager.chrome import ChromeDriverManager
+            import time
+            import shutil
+            
+            start_obj = datetime.strptime(start_date, '%Y-%m-%d')
+            end_obj = datetime.strptime(end_date, '%Y-%m-%d')
+            start_bse = start_obj.strftime('%d/%m/%Y')
+            end_bse = end_obj.strftime('%d/%m/%Y')
+            
+            print(f"🔄 Fetching BSE bulk deals from {start_date} to {end_date}...")
+            
+            chrome_options = Options()
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--window-position=-2400,-2400')
+            
+            temp_dir = tempfile.mkdtemp()
+            prefs = {
+                'download.default_directory': temp_dir,
+                'download.prompt_for_download': False,
+                'download.directory_upgrade': True
+            }
+            chrome_options.add_experimental_option('prefs', prefs)
+            
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            
+            try:
+                url = "http://www.bseindia.com/markets/equity/EQReports/BulknBlockDeals.aspx?flag=1"
+                driver.get(url)
+                
+                wait = WebDriverWait(driver, 20)
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".hasDatepicker")))
+                time.sleep(3)
+                
+                # Set FROM date
+                driver.execute_script(f"""
+                    var fromDateField = document.querySelector('div:nth-child(3) .hasDatepicker');
+                    if (fromDateField) {{
+                        $(fromDateField).datepicker('setDate', '{start_bse}');
+                        fromDateField.value = '{start_bse}';
+                    }}
+                """)
+                time.sleep(2)
+                
+                # Set TO date
+                driver.execute_script(f"""
+                    var toDateField = document.querySelector('div:nth-child(5) input[type="text"]');
+                    if (toDateField) {{
+                        $(toDateField).datepicker('setDate', '{end_bse}');
+                        toDateField.value = '{end_bse}';
+                    }}
+                """)
+                time.sleep(2)
+                
+                # Submit
+                driver.execute_script("document.getElementById('ContentPlaceHolder1_btnSubmit').click();")
+                time.sleep(5)
+                
+                # Wait for results
+                try:
+                    wait.until(lambda d: 'Period' in d.find_element(By.TAG_NAME, "body").text)
+                    time.sleep(3)
+                except:
+                    time.sleep(10)
+                
+                # Download CSV
+                download_btn = driver.find_element(By.ID, "ContentPlaceHolder1_btnDownload")
+                download_btn.click()
+                time.sleep(5)
+                
+                # Parse CSV
+                csv_files = [f for f in os.listdir(temp_dir) if f.endswith('.csv')]
+                bulk_deals = []
+                
+                if csv_files:
+                    csv_path = os.path.join(temp_dir, csv_files[0])
+                    print(f"📥 Downloaded CSV: {csv_files[0]}")
+                    
+                    with open(csv_path, 'r', encoding='utf-8') as f:
+                        reader = csv_module.DictReader(f)
+                        for row in reader:
+                            deal_date = row.get('Deal Date', '').strip()
+                            # Parse deal date
+                            try:
+                                if '/' in deal_date:
+                                    parts = deal_date.split('/')
+                                    deal_date = f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+                            except:
+                                pass
+                            
+                            deal_type = row.get('Deal Type', '').strip().upper()
+                            bulk_deals.append({
+                                'date': deal_date,
+                                'scripCode': row.get('Security Code', '').strip(),
+                                'securityName': row.get('Company', '').strip(),
+                                'clientName': row.get('Client Name', '').strip(),
+                                'side': 'BUY' if deal_type in ['BUY', 'B', 'P'] else 'SELL',
+                                'quantity': BulkDealsDatabase._parse_number(row.get('Quantity', '0')),
+                                'price': BulkDealsDatabase._parse_float(row.get('Price', '0')),
+                                'type': 'bulk',
+                                'exchange': 'BSE'
+                            })
+                    
+                    print(f"✅ Parsed {len(bulk_deals)} deals from CSV")
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                else:
+                    print("❌ CSV file not downloaded")
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    return jsonify({
+                        'success': False,
+                        'error': 'Failed to download CSV from BSE'
+                    }), 500
+                
+            finally:
+                driver.quit()
+            
+            # Add to database
+            added = db.add_deals(bulk_deals)
+            
+            return jsonify({
+                'success': True,
+                'message': f'Fetched {len(bulk_deals)} deals, added {added} new deals',
+                'total_fetched': len(bulk_deals),
+                'added': added,
+                'date_range': {'start': start_date, 'end': end_date},
+                'metadata': db.metadata
+            })
+            
+        except ImportError as e:
+            return jsonify({
+                'success': False,
+                'error': f'Selenium not installed: {str(e)}'
+            }), 500
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
     
     @app.route('/api/bulk-deals/database/fetch-today', methods=['POST'])
     def fetch_today_deals():

@@ -28,7 +28,7 @@ interface BaselineCache {
 }
 
 async function fetchQuote(scripCode: string): Promise<any> {
-  const bseServiceUrl = process.env.BSE_SERVICE_URL || "http://localhost:5000"
+  const bseServiceUrl = process.env.BSE_SERVICE_URL || "http://localhost:8080"
   try {
     const res = await fetch(`${bseServiceUrl}/api/quote/${scripCode}`, {
       signal: AbortSignal.timeout(10000),
@@ -64,7 +64,7 @@ function isMarketHours(): boolean {
 export async function GET(request: NextRequest) {
   try {
     const yesterdayDate = getYesterdayDate()
-    const bseServiceUrl = process.env.BSE_SERVICE_URL || "http://localhost:5000"
+    const bseServiceUrl = process.env.BSE_SERVICE_URL || "http://localhost:8080"
     
     const dealsRes = await fetch(
       `${bseServiceUrl}/api/bulk-deals/database?start=${yesterdayDate}&end=${yesterdayDate}`,

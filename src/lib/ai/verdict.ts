@@ -407,7 +407,7 @@ function extractOpportunities(text: string): string[] {
 /**
  * Verdict display helpers
  */
-export function getVerdictColor(verdict: VerdictType): string {
+export function getVerdictColor(verdict: VerdictType, confidence?: number): string {
   const colors: Record<VerdictType, string> = {
     strong_positive: "#10b981",
     positive: "#22c55e",
@@ -416,10 +416,16 @@ export function getVerdictColor(verdict: VerdictType): string {
     negative: "#ef4444",
     strong_negative: "#dc2626",
   }
+  
+  // Smart Neutral: High confidence neutral is colored cyan/teal to show stability
+  if (verdict === "neutral" && confidence && confidence >= 80) {
+    return "#06b6d4" // Cyan-500
+  }
+  
   return colors[verdict]
 }
 
-export function getVerdictBgColor(verdict: VerdictType): string {
+export function getVerdictBgColor(verdict: VerdictType, confidence?: number): string {
   const colors: Record<VerdictType, string> = {
     strong_positive: "bg-emerald-500/20",
     positive: "bg-green-500/20",
@@ -428,6 +434,11 @@ export function getVerdictBgColor(verdict: VerdictType): string {
     negative: "bg-red-500/20",
     strong_negative: "bg-red-600/20",
   }
+  
+  if (verdict === "neutral" && confidence && confidence >= 80) {
+    return "bg-cyan-500/20"
+  }
+  
   return colors[verdict]
 }
 

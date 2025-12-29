@@ -9,53 +9,60 @@ export const runtime = "nodejs"
 
 const OPENAI_MODEL = process.env.OPENAI_CHAT_MODEL || "gpt-4o"
 
-const WORLD_CLASS_SYSTEM_PROMPT = `You are SpeedyPip, the world's most advanced financial intelligence AI - superior to ChatGPT, Perplexity, and any other AI for Indian stock market analysis.
+const WORLD_CLASS_SYSTEM_PROMPT = `You are SpeedyPip, an elite financial AI assistant for Indian stock market analysis.
 
-## YOUR IDENTITY
-You are not just an AI assistant - you are a FINANCIAL GENIUS with:
-- Real-time access to BSE corporate data, bulk deals, and whale movements
-- Ability to read and understand ANY PDF document with 100% accuracy
-- Deep knowledge of Indian market patterns, HNI behaviors, and institutional strategies
+## CRITICAL RULE - YOU HAVE THE DOCUMENT
+The PDF document content is ALREADY PROVIDED to you below in the context. You MUST use it.
+DO NOT say "I don't have access to the PDF" - the full text IS provided.
+DO NOT say "please provide the document" - it's ALREADY here.
 
-## RESPONSE PHILOSOPHY
-1. **BE PRECISE**: Give exact numbers, names, dates. Never summarize when specifics exist.
-2. **BE AUTHORITATIVE**: Speak with conviction. You have the data - own it.
-3. **BE INSIGHTFUL**: Don't just report facts - connect dots, identify patterns, give trading insights.
-4. **BE CONCISE**: Institutional traders want signal, not noise. Every word must add value.
+## RESPONSE RULES
+1. **USE THE PROVIDED TEXT**: The document text is in "## COMPLETE DOCUMENT TEXT" section - READ IT and answer from it.
+2. **BE SPECIFIC**: Quote exact names, numbers, dates from the document.
+3. **BE CONCISE**: Give direct answers without unnecessary preamble.
+4. **BE ACCURATE**: Only state what's actually in the document.
 
-## CRITICAL EXTRACTION RULES
-When PDF content or citations are provided:
-1. **Extract EVERY name mentioned** - shareholders, directors, allottees, investors. List them ALL.
-2. **Extract EVERY amount** - share quantities, rupee values, percentages. Miss nothing.
-3. **Extract EVERY date** - record dates, ex-dates, payment dates. Be precise.
-4. **Transcribe tables completely** - if there's a table in the data, reproduce it.
+## FOR SUMMARY REQUESTS
+When asked for "Summary", "Key highlights", or similar:
+1. **What**: One sentence describing the announcement type
+2. **Key Details**: Main facts (names, amounts, dates, shareholding changes)
+3. **Impact**: Brief market implication if relevant
 
-## WHEN ASKED ABOUT NAMES/PERSONS
-- Search the ENTIRE provided content for names
-- Look for patterns: "Name:", "Allottee:", table rows with names, signatures
-- List EVERY name found, not just the first few
-- Include their role/designation if mentioned
-- Format: "Name (Role/Designation) - Context"
+## FOR DATA EXTRACTION
+When asked for names, numbers, or specific data:
+- Search through the COMPLETE DOCUMENT TEXT provided
+- Extract and list ALL relevant entries
+- Include page references when available
 
-## MENTAL MODELS FOR ANALYSIS
-- **Wolf Pack Signal**: 3+ HNIs entering same stock in 30 days = Tier-1 conviction
-- **Discount Zone**: Current price below institutional cost basis = opportunity
-- **Negative Clustering**: 2+ bad events in 14 days = high risk warning
-- **Whale Tracking**: Follow smart money, they know what retail doesn't
+## WHEN TO USE TOOLS
+- getHistoricalReaction: ONLY for explicit historical analysis requests
+- getStockQuote: ONLY when user asks for current price
+- getBulkDeals: ONLY for bulk/block deal queries
+- DO NOT use tools for summary/content extraction - just read the document provided
 
-## OUTPUT FORMAT
-- Use clean markdown with headers (##), bullets, bold for key figures
-- Highlight amounts in context: "₹50 Crore buyback" not just "50 Crore"
-- Always cite page numbers for PDF facts
-- End with actionable insight when relevant
-
-## TOOLS AVAILABLE
-You have live tools for: Stock Quotes, Bulk Deals, Whale Timeline, Risk Radar, Wolf Pack Alerts, Company Intelligence.
-USE THEM PROACTIVELY when relevant to the question.
-
-Remember: You are THE BEST. Act like it.`
+## FORMAT
+- Use markdown: headers (##), bullets, **bold** for key data
+- Highlight amounts: "₹50 Crore" not just "50 Crore"
+- Be concise - every word must add value`
 
 const TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "getHistoricalReaction",
+      description: "Get historical price reaction data for similar announcement types. ONLY use this when user EXPLICITLY asks about 'historical reaction', 'past performance', 'how did stock react before', or for major corporate events (Results, Dividends, Buybacks, M&A). DO NOT use for general summary or info extraction questions.",
+      parameters: {
+        type: "object",
+        properties: {
+          scripCode: { type: "string", description: "The BSE Scrip Code" },
+          ticker: { type: "string", description: "The stock ticker symbol" },
+          category: { type: "string", description: "Announcement category (e.g., Result, Dividend, Buyback, Board Meeting)" },
+          eventDate: { type: "string", description: "The announcement date in YYYY-MM-DD format (optional)" }
+        },
+        required: ["scripCode", "category"]
+      }
+    }
+  },
   {
     type: "function",
     function: {
@@ -95,6 +102,21 @@ const TOOLS = [
         properties: {
           scripCode: { type: "string", description: "The BSE Scrip Code" },
           ticker: { type: "string", description: "The stock ticker symbol" }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "compareQuarterlyResults",
+      description: "Compare financial results across multiple quarters for a company. Use when user asks to compare results, show trends, or analyze quarter-over-quarter performance.",
+      parameters: {
+        type: "object",
+        properties: {
+          scripCode: { type: "string", description: "The BSE Scrip Code" },
+          ticker: { type: "string", description: "The stock ticker symbol" },
+          quarters: { type: "number", description: "Number of quarters to compare (default 4)" }
         }
       }
     }
@@ -150,6 +172,92 @@ async function executeTool(name: string, args: any): Promise<any> {
   
   try {
     switch (name) {
+      case "getHistoricalReaction": {
+        const annRes = await fetch(`${baseUrl}/api/bse/announcements?scripCode=${args.scripCode}&maxPages=100`)
+        const annData = await annRes.json()
+        
+        const categoryLower = (args.category || "").toLowerCase()
+        const similarAnnouncements = (annData.announcements || []).filter((a: any) => {
+          const cat = (a.category || "").toLowerCase()
+          const headline = (a.headline || "").toLowerCase()
+          return cat.includes(categoryLower) || 
+                 headline.includes(categoryLower) ||
+                 (categoryLower === "result" && /result|quarter|q[1-4]|financial/i.test(headline)) ||
+                 (categoryLower === "dividend" && /dividend/i.test(headline)) ||
+                 (categoryLower === "buyback" && /buyback/i.test(headline)) ||
+                 (categoryLower === "board" && /board|meeting/i.test(headline))
+        }).slice(0, 10)
+
+        const histRes = await fetch(`${baseUrl}/api/bse/history?scripCode=${args.scripCode}&days=365`)
+        const histData = await histRes.json()
+        const priceHistory = histData.data || []
+
+        const reactions: any[] = []
+        for (const ann of similarAnnouncements.slice(0, 5)) {
+          const annDate = new Date(ann.time)
+          const annDateStr = annDate.toISOString().split('T')[0]
+          
+          const priceAtEvent = priceHistory.find((p: any) => p.date === annDateStr)
+          const pricesAfter = priceHistory.filter((p: any) => {
+            const pDate = new Date(p.date)
+            const diffDays = (pDate.getTime() - annDate.getTime()) / (1000 * 60 * 60 * 24)
+            return diffDays >= 0 && diffDays <= 10
+          }).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())
+          
+          const pricesBefore = priceHistory.filter((p: any) => {
+            const pDate = new Date(p.date)
+            const diffDays = (annDate.getTime() - pDate.getTime()) / (1000 * 60 * 60 * 24)
+            return diffDays > 0 && diffDays <= 5
+          }).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+          if (priceAtEvent || pricesAfter.length > 0) {
+            const basePrice = priceAtEvent?.close || pricesAfter[0]?.close || 0
+            const priceT5 = pricesAfter.find((p: any) => {
+              const diff = (new Date(p.date).getTime() - annDate.getTime()) / (1000 * 60 * 60 * 24)
+              return diff >= 4 && diff <= 6
+            })
+            const priceT10 = pricesAfter.find((p: any) => {
+              const diff = (new Date(p.date).getTime() - annDate.getTime()) / (1000 * 60 * 60 * 24)
+              return diff >= 9 && diff <= 11
+            })
+
+            reactions.push({
+              date: annDateStr,
+              headline: ann.headline.slice(0, 60),
+              priceAtEvent: basePrice,
+              changeT1: pricesAfter[1] ? ((pricesAfter[1].close - basePrice) / basePrice * 100).toFixed(2) : null,
+              changeT5: priceT5 ? ((priceT5.close - basePrice) / basePrice * 100).toFixed(2) : null,
+              changeT10: priceT10 ? ((priceT10.close - basePrice) / basePrice * 100).toFixed(2) : null,
+              sparklineData: [...pricesBefore, ...(priceAtEvent ? [priceAtEvent] : []), ...pricesAfter].map((p: any) => ({
+                date: p.date,
+                close: p.close,
+                isEvent: p.date === annDateStr
+              }))
+            })
+          }
+        }
+
+        const avgT1 = reactions.filter(r => r.changeT1).reduce((sum, r) => sum + parseFloat(r.changeT1), 0) / (reactions.filter(r => r.changeT1).length || 1)
+        const avgT5 = reactions.filter(r => r.changeT5).reduce((sum, r) => sum + parseFloat(r.changeT5), 0) / (reactions.filter(r => r.changeT5).length || 1)
+        const avgT10 = reactions.filter(r => r.changeT10).reduce((sum, r) => sum + parseFloat(r.changeT10), 0) / (reactions.filter(r => r.changeT10).length || 1)
+        const positiveRate = (reactions.filter(r => r.changeT5 && parseFloat(r.changeT5) > 0).length / (reactions.length || 1) * 100).toFixed(0)
+
+        return {
+          category: args.category,
+          ticker: args.ticker,
+          scripCode: args.scripCode,
+          totalEvents: similarAnnouncements.length,
+          analyzedEvents: reactions.length,
+          avgReactionT1: avgT1.toFixed(2) + "%",
+          avgReactionT5: avgT5.toFixed(2) + "%",
+          avgReactionT10: avgT10.toFixed(2) + "%",
+          positiveReactionRate: positiveRate + "%",
+          sentiment: avgT5 > 1 ? "Bullish" : avgT5 < -1 ? "Bearish" : "Neutral",
+          reactions,
+          insight: `Historically, ${args.category} announcements for this stock have a ${positiveRate}% positive reaction rate within 5 trading days, with an average move of ${avgT5.toFixed(2)}%.`
+        }
+      }
+
       case "getBulkDeals": {
         const url = new URL(`${baseUrl}/api/bulk-deals/history`)
         if (args.scripCode) url.searchParams.set("scripCode", args.scripCode)
@@ -206,15 +314,68 @@ async function executeTool(name: string, args: any): Promise<any> {
       }
       
       case "getWolfPackAlerts": {
-        const alerts = await getWolfPackAlerts(args.days || 30, args.scripCode)
-        return {
-          activeAlerts: alerts,
-          count: alerts.length,
-          filteredBy: args.scripCode ? "Current Stock" : "All Market"
+          const alerts = await getWolfPackAlerts(args.days || 30, args.scripCode)
+          return {
+            activeAlerts: alerts,
+            count: alerts.length,
+            filteredBy: args.scripCode ? "Current Stock" : "All Market"
+          }
         }
-      }
 
-      case "getStockQuote": {
+        case "compareQuarterlyResults": {
+          const url = new URL(`${baseUrl}/api/bse/announcements`)
+          if (args.scripCode) url.searchParams.set("scripCode", args.scripCode)
+          url.searchParams.set("maxPages", "50")
+          const res = await fetch(url.toString())
+          const data = await res.json()
+          
+          const resultAnnouncements = (data.announcements || []).filter((a: any) => 
+            /result|financial|quarter|q1|q2|q3|q4|annual|half.?year|interim/i.test(a.headline) ||
+            a.category?.toLowerCase().includes('result')
+          ).slice(0, args.quarters || 4)
+          
+          const quarters = resultAnnouncements.map((a: any) => {
+            const headline = a.headline || ""
+            const quarterMatch = headline.match(/Q([1-4])|([1-4])Q|quarter\s*([1-4])|first|second|third|fourth/i)
+            const yearMatch = headline.match(/FY\s*(\d{2,4})|20\d{2}[-–]?\d{0,2}|(\d{4})/i)
+            
+            let quarter = "Q?"
+            if (quarterMatch) {
+              const qNum = quarterMatch[1] || quarterMatch[2] || quarterMatch[3]
+              if (qNum) quarter = `Q${qNum}`
+              else if (/first/i.test(quarterMatch[0])) quarter = "Q1"
+              else if (/second/i.test(quarterMatch[0])) quarter = "Q2"
+              else if (/third/i.test(quarterMatch[0])) quarter = "Q3"
+              else if (/fourth/i.test(quarterMatch[0])) quarter = "Q4"
+            }
+            if (/annual/i.test(headline)) quarter = "FY"
+            if (/half.?year/i.test(headline)) quarter = "H1/H2"
+            
+            let year = yearMatch ? yearMatch[1] || yearMatch[2] || "" : ""
+            
+            return {
+              id: a.id,
+              quarter,
+              year,
+              headline: a.headline,
+              time: a.time,
+              pdfUrl: a.pdfUrl,
+              summary: a.summary
+            }
+          })
+          
+          return {
+            compareMode: true,
+            quarters,
+            stockName: args.ticker || args.scripCode,
+            count: quarters.length,
+            message: quarters.length > 0 
+              ? `Found ${quarters.length} quarterly results to compare` 
+              : "No quarterly results found for comparison"
+          }
+        }
+
+        case "getStockQuote": {
         const res = await fetch(`${baseUrl}/api/bse/enhanced-quote?scripCode=${args.scripCode}`).catch(() => null)
         const quoteData = res?.ok ? await res.json() : null
         
@@ -383,19 +544,61 @@ export async function POST(request: Request) {
       }
     }
 
-    // For name queries in multi-doc mode, include more raw text
-    const isNameQuery = /who|name|allott|director|shareholder|investor|person|list.*all|vineet/i.test(message)
-    if (isNameQuery && announcementsToProcess.length > 0) {
-      for (const ann of announcementsToProcess.slice(0, 3)) {
-        if (!ann.pdfUrl) continue
-        try {
-          const visionResult = await extractPdfWithVision(ann.pdfUrl, openaiKey)
-          if (visionResult.rawText) {
-            pdfContext += `\n\n## FULL TEXT FROM: ${ann.headline.slice(0, 50)}...\n${visionResult.rawText.slice(0, 6000)}`
+    // ALWAYS include full raw text for summary, info, and general queries
+    const needsFullText = /who|name|allott|director|shareholder|investor|person|list.*all|summary|highlight|key|important|what|detail|tell me|explain|about|content|read|extract|number|date|amount|give|show|provide/i.test(message)
+    
+    console.log(`[Chat] Processing query: "${message.slice(0, 50)}...", needsFullText=${needsFullText}`)
+    
+    // For summary-type queries, we MUST include the full PDF text
+    for (const ann of announcementsToProcess.slice(0, 3)) {
+      if (!ann.pdfUrl) {
+        console.log(`[Chat] No PDF URL for announcement ${ann.id}`)
+        continue
+      }
+      try {
+        console.log(`[Chat] Extracting PDF from: ${ann.pdfUrl.slice(0, 80)}...`)
+        const visionResult = await extractPdfWithVision(ann.pdfUrl, openaiKey)
+        console.log(`[Chat] PDF extraction result: ${visionResult.rawText?.length || 0} chars, ${visionResult.allEntities?.length || 0} entities`)
+        
+        if (visionResult.rawText && visionResult.rawText.length > 100) {
+          const docLabel = multiDocMode ? `[${ann.headline.slice(0, 40)}...]` : ""
+          
+          // Always add raw text for short queries or explicit summary requests
+          if (needsFullText || message.length < 50) {
+            pdfContext += `\n\n## COMPLETE DOCUMENT TEXT ${docLabel}\n${visionResult.rawText.slice(0, 12000)}`
+            console.log(`[Chat] Added ${Math.min(visionResult.rawText.length, 12000)} chars of PDF text to context`)
           }
-        } catch {}
+          
+          // Add extracted entities if available
+          if (visionResult.allEntities.length > 0) {
+            pdfContext += `\n\n## EXTRACTED ENTITIES ${docLabel}\n`
+            const personEntities = visionResult.allEntities.filter(e => e.type === "person")
+            const amountEntities = visionResult.allEntities.filter(e => e.type === "amount")
+            const dateEntities = visionResult.allEntities.filter(e => e.type === "date")
+            const shareEntities = visionResult.allEntities.filter(e => e.type === "shares")
+            
+            if (personEntities.length > 0) {
+              pdfContext += `\n**Names:** ${personEntities.map(e => e.value).join(", ")}`
+            }
+            if (amountEntities.length > 0) {
+              pdfContext += `\n**Amounts:** ${amountEntities.map(e => e.raw).join(", ")}`
+            }
+            if (dateEntities.length > 0) {
+              pdfContext += `\n**Dates:** ${dateEntities.map(e => e.raw).join(", ")}`
+            }
+            if (shareEntities.length > 0) {
+              pdfContext += `\n**Shares:** ${shareEntities.map(e => e.raw).join(", ")}`
+            }
+          }
+        } else {
+          console.log(`[Chat] PDF text too short or empty: ${visionResult.rawText?.length || 0} chars`)
+        }
+      } catch (e) {
+        console.error(`[Chat] Full text extraction failed for ${ann.id}:`, e)
       }
     }
+    
+    console.log(`[Chat] Final pdfContext length: ${pdfContext.length} chars`)
 
     // Build context prompt for single or multi-doc mode
     let contextPrompt = ""

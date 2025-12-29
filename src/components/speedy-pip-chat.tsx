@@ -8,7 +8,7 @@ import {
   TrendingUp, TrendingDown, BarChart3, Calculator, AlertCircle, Zap,
   Target, PieChart, ArrowUpRight, ArrowDownRight, Check, Copy,
   ThumbsUp, ThumbsDown, Volume2, VolumeX, Download, Share2, Calendar,
-  IndianRupee, Percent, Hash, Upload, Image as ImageIcon
+  IndianRupee, Percent, Hash, Upload, Image as ImageIcon, Activity
 } from "lucide-react"
 import type { BSEAnnouncement } from "@/lib/bse/types"
 
@@ -39,6 +39,143 @@ import { RiskRadar } from "./risk-radar"
 import { FeyCard } from "./fey/FeyCard"
 import { DealPerformanceTable } from "./bulk-deals/DealPerformanceTable"
 import { TradingViewChart } from "./trading-view-chart"
+import { CitationCard } from "./citation-popover"
+
+function EventSparkline({ data, eventIndex }: { data: { date: string; close: number; isEvent?: boolean }[]; eventIndex?: number }) {
+  if (!data || data.length < 2) return null
+  
+  const minVal = Math.min(...data.map(d => d.close))
+  const maxVal = Math.max(...data.map(d => d.close))
+  const range = maxVal - minVal || 1
+  const width = 140
+  const height = 32
+  const padding = 2
+  
+  const points = data.map((d, i) => {
+    const x = padding + (i / (data.length - 1)) * (width - padding * 2)
+    const y = height - padding - ((d.close - minVal) / range) * (height - padding * 2)
+    return `${x},${y}`
+  }).join(' ')
+  
+  const eventIdx = data.findIndex(d => d.isEvent)
+  const eventX = eventIdx >= 0 ? padding + (eventIdx / (data.length - 1)) * (width - padding * 2) : null
+  
+  const firstPrice = data[0]?.close || 0
+  const lastPrice = data[data.length - 1]?.close || 0
+  const isPositive = lastPrice >= firstPrice
+  
+  return (
+    <svg width={width} height={height} className="overflow-visible">
+      <defs>
+        <linearGradient id="sparkGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor={isPositive ? "#10b981" : "#ef4444"} stopOpacity="0.3" />
+          <stop offset="100%" stopColor={isPositive ? "#10b981" : "#ef4444"} stopOpacity="0.8" />
+        </linearGradient>
+      </defs>
+      <polyline
+        points={points}
+        fill="none"
+        stroke="url(#sparkGrad)"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {eventX && (
+        <>
+          <line x1={eventX} y1="0" x2={eventX} y2={height} stroke="#06b6d4" strokeWidth="1" strokeDasharray="2,2" opacity="0.6" />
+          <circle cx={eventX} cy={height - padding - ((data[eventIdx].close - minVal) / range) * (height - padding * 2)} r="3" fill="#06b6d4" />
+        </>
+      )}
+    </svg>
+  )
+}
+
+function HistoricalReactionCard({ data }: { data: any }) {
+  if (!data || data.analyzedEvents === 0) return null
+  
+  const sentiment = data.sentiment || "Neutral"
+  const sentimentColor = sentiment === "Bullish" ? "emerald" : sentiment === "Bearish" ? "rose" : "zinc"
+  
+  return (
+    <div className="mt-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
+      <div className="flex items-center gap-2 mb-3 px-1">
+        <div className="h-2 w-2 rounded-full bg-cyan-500 animate-pulse" />
+        <p className="text-[10px] font-black text-cyan-400 uppercase tracking-[0.15em]">Historical Reaction Analysis</p>
+      </div>
+      
+      <div className="rounded-2xl overflow-hidden border border-white/10 bg-zinc-950/80 backdrop-blur-xl">
+        <div className="p-4 border-b border-white/5 bg-gradient-to-r from-cyan-500/5 to-purple-500/5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-white">{data.category} Events</h3>
+              <p className="text-[10px] text-zinc-500">{data.analyzedEvents} of {data.totalEvents} events analyzed</p>
+            </div>
+            <div className={`px-3 py-1.5 rounded-lg bg-${sentimentColor}-500/20 border border-${sentimentColor}-500/30`}>
+              <span className={`text-xs font-black text-${sentimentColor}-400 uppercase tracking-wider`}>{sentiment}</span>
+            </div>
+          </div>
+        </div>
+        
+        <div className="p-4">
+          <div className="grid grid-cols-4 gap-3 mb-4">
+            <div className="text-center p-2 rounded-lg bg-white/5">
+              <p className="text-[9px] text-zinc-500 uppercase font-bold">T+1</p>
+              <p className={`text-sm font-black ${parseFloat(data.avgReactionT1) > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {data.avgReactionT1}
+              </p>
+            </div>
+            <div className="text-center p-2 rounded-lg bg-white/5">
+              <p className="text-[9px] text-zinc-500 uppercase font-bold">T+5</p>
+              <p className={`text-sm font-black ${parseFloat(data.avgReactionT5) > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {data.avgReactionT5}
+              </p>
+            </div>
+            <div className="text-center p-2 rounded-lg bg-white/5">
+              <p className="text-[9px] text-zinc-500 uppercase font-bold">T+10</p>
+              <p className={`text-sm font-black ${parseFloat(data.avgReactionT10) > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {data.avgReactionT10}
+              </p>
+            </div>
+            <div className="text-center p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+              <p className="text-[9px] text-cyan-400 uppercase font-bold">Win Rate</p>
+              <p className="text-sm font-black text-cyan-400">{data.positiveReactionRate}</p>
+            </div>
+          </div>
+          
+          {data.reactions && data.reactions.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider mb-2">Past Events</p>
+              {data.reactions.slice(0, 3).map((r: any, i: number) => (
+                <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <div className="flex-shrink-0">
+                      <EventSparkline data={r.sparklineData} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[11px] text-zinc-300 truncate">{r.headline}</p>
+                      <p className="text-[9px] text-zinc-600">{r.date}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {r.changeT5 && (
+                      <span className={`text-xs font-bold ${parseFloat(r.changeT5) > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {parseFloat(r.changeT5) > 0 ? '+' : ''}{r.changeT5}%
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          <div className="mt-4 p-3 rounded-lg bg-gradient-to-r from-cyan-500/10 to-purple-500/10 border border-cyan-500/20">
+            <p className="text-[11px] text-zinc-300 leading-relaxed italic">"{data.insight}"</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 interface ChatMessage {
   id: string
@@ -63,6 +200,9 @@ function ChatWidgetRenderer({ widget }: { widget: any }) {
   const [selectedTicker, setSelectedTicker] = useState(data?.ticker || args?.ticker)
 
   switch (type) {
+    case "getHistoricalReaction":
+      return <HistoricalReactionCard data={data} />
+
     case "getBulkDeals":
       return (
         <div className="mt-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
@@ -133,9 +273,55 @@ function ChatWidgetRenderer({ widget }: { widget: any }) {
                   <p className="text-xs text-zinc-500">No active Wolf Pack signals detected for this stock in recent 30 days.</p>
                 </div>
               )}
+              </div>
             </div>
-          </div>
-        )
+          )
+
+        case "compareQuarterlyResults":
+          return (
+            <div className="mt-4 animate-in fade-in slide-in-from-bottom-2 duration-500">
+              <div className="flex items-center justify-between mb-2 px-1">
+                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Quarterly Comparison</p>
+                <span className="text-[10px] font-bold text-purple-400">{data.count} quarters</span>
+              </div>
+              <div className="rounded-2xl overflow-hidden border border-purple-500/20 bg-gradient-to-br from-purple-500/5 to-zinc-900/50">
+                <div className="p-4 border-b border-white/5">
+                  <h3 className="text-sm font-bold text-white">{data.stockName} - Results Timeline</h3>
+                  <p className="text-[10px] text-zinc-500 mt-0.5">{data.message}</p>
+                </div>
+                <div className="divide-y divide-white/5">
+                  {data.quarters?.map((q: any, i: number) => (
+                    <div key={i} className="p-3 hover:bg-white/5 transition-colors flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-xl bg-purple-500/20 flex items-center justify-center flex-shrink-0">
+                          <span className="text-xs font-bold text-purple-400">{q.quarter}</span>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-white truncate max-w-[200px]">{q.headline?.slice(0, 50)}...</p>
+                          <p className="text-[10px] text-zinc-500">{new Date(q.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+                        </div>
+                      </div>
+                      {q.pdfUrl && (
+                        <a 
+                          href={q.pdfUrl} 
+                          target="_blank" 
+                          rel="noreferrer"
+                          className="px-3 py-1.5 rounded-lg bg-purple-500/20 border border-purple-500/30 text-purple-400 text-[10px] font-medium hover:bg-purple-500/30 transition-colors"
+                        >
+                          View PDF
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {data.quarters?.length === 0 && (
+                  <div className="p-6 text-center">
+                    <p className="text-sm text-zinc-500">No quarterly results found for this company.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
 
         case "getStockQuote":
           const isUp = (data.change || 0) >= 0
@@ -1210,8 +1396,14 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
 
   if (!isOpen) return null
 
-  // Compact PIP mode
+  // Compact PIP mode - minimal dark orb with sentiment glow
   if (!isExpanded) {
+    const lastAssistantMsg = messages.filter(m => m.role === 'assistant').pop()
+    const hasBullishSignal = lastAssistantMsg?.content?.toLowerCase().includes('bullish') || lastAssistantMsg?.widgets?.some((w: any) => w.data?.sentiment === 'Bullish')
+    const hasBearishSignal = lastAssistantMsg?.content?.toLowerCase().includes('bearish') || lastAssistantMsg?.widgets?.some((w: any) => w.data?.sentiment === 'Bearish')
+    const sentimentGlow = hasBullishSignal ? 'shadow-emerald-500/40' : hasBearishSignal ? 'shadow-rose-500/40' : 'shadow-cyan-500/30'
+    const sentimentRing = hasBullishSignal ? 'from-emerald-500 to-cyan-500' : hasBearishSignal ? 'from-rose-500 to-orange-500' : 'from-cyan-500 to-blue-600'
+    
     return (
       <div
         ref={containerRef}
@@ -1221,37 +1413,32 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
       >
         <div 
           onClick={() => setIsExpanded(true)}
-          className="relative w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-500 via-blue-500 to-purple-600 shadow-2xl shadow-cyan-500/30 hover:shadow-cyan-500/50 hover:scale-110 transition-all flex items-center justify-center"
+          className={`relative w-12 h-12 rounded-xl bg-zinc-950 border border-white/10 shadow-2xl ${sentimentGlow} hover:scale-110 transition-all flex items-center justify-center overflow-hidden`}
         >
-          {/* Animated ring */}
-          <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-cyan-400 to-purple-500 opacity-50 animate-ping" />
-          <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-cyan-500 to-purple-600" />
+          <div className={`absolute inset-0 bg-gradient-to-br ${sentimentRing} opacity-20`} />
+          <div className={`absolute inset-0 bg-gradient-to-br ${sentimentRing} opacity-30 blur-xl animate-pulse`} />
+          <Sparkles className="relative h-5 w-5 text-white" />
           
-          {/* Icon */}
-          <Sparkles className="relative h-6 w-6 text-white" />
-          
-          {/* Badge */}
           {messages.length > 1 && (
-            <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-[10px] text-white font-bold flex items-center justify-center">
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-white text-zinc-950 rounded-full text-[9px] font-black flex items-center justify-center">
               {messages.length - 1}
             </span>
           )}
         </div>
         
-        {/* Tooltip */}
-        <div className="absolute bottom-full right-0 mb-2 px-3 py-1.5 rounded-lg bg-zinc-900 border border-white/10 text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-          {activeAnnouncement.ticker} • Click to expand
+        <div className="absolute bottom-full right-0 mb-2 px-2 py-1 rounded-md bg-zinc-950 border border-white/10 text-[10px] text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap font-medium">
+          {activeAnnouncement.ticker}
         </div>
       </div>
     )
   }
 
-  // Expanded chat mode
+  // Expanded chat mode - ultra-minimal dark design
   return (
     <div
       ref={containerRef}
-      className={`fixed z-50 flex flex-col bg-zinc-950/95 backdrop-blur-xl border border-white/10 shadow-2xl shadow-black/50 overflow-hidden transition-all ${
-        isMaximized ? 'rounded-none' : 'rounded-2xl'
+      className={`fixed z-50 flex flex-col bg-zinc-950 border border-white/5 shadow-2xl shadow-black/80 overflow-hidden transition-all ${
+        isMaximized ? 'rounded-none' : 'rounded-xl'
       }`}
       style={isMaximized ? {
         inset: 0,
@@ -1261,99 +1448,81 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
       } : { 
         right: position.x, 
         bottom: position.y,
-        width: 'min(500px, 95vw)',
-        height: 'min(700px, 85vh)',
+        width: 'min(480px, 95vw)',
+        height: 'min(680px, 85vh)',
         maxHeight: '800px',
         zIndex: 9999
       }}
       onMouseDown={handleMouseDown}
     >
-      {/* Header with drag handle */}
-      <div className="flex items-center justify-between px-3 py-2.5 border-b border-white/5 bg-zinc-900/50">
+      {/* Minimal Header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
         <div className="flex items-center gap-2">
-          {/* Drag Handle */}
           <div className="drag-handle cursor-move p-1 rounded hover:bg-white/5">
-            <GripVertical className="h-4 w-4 text-zinc-500" />
+            <GripVertical className="h-3.5 w-3.5 text-zinc-600" />
           </div>
           
-          {/* Orb Avatar */}
-          <div className="relative w-8 h-8">
-            <div className="absolute inset-0 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 opacity-40 blur-md animate-pulse" />
-            <div className="relative w-full h-full rounded-full bg-gradient-to-br from-cyan-400 to-blue-500 flex items-center justify-center">
-              <Sparkles className="h-4 w-4 text-white" />
+          <div className="relative w-7 h-7">
+            <div className="absolute inset-0 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 opacity-30 blur-md" />
+            <div className="relative w-full h-full rounded-lg bg-gradient-to-br from-cyan-500/80 to-blue-600/80 flex items-center justify-center">
+              <Sparkles className="h-3.5 w-3.5 text-white" />
             </div>
           </div>
           
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-white truncate">
+            <p className="text-xs font-semibold text-white truncate">
               {multiDocMode ? `${selectedDocs.length} Docs` : activeAnnouncement.ticker}
             </p>
-            <p className="text-[10px] text-zinc-500 truncate">{activeAnnouncement.company}</p>
           </div>
         </div>
         
         <div className="flex items-center gap-0.5">
-          {/* Export */}
-          <button
-            onClick={exportChat}
-            className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5"
-            title="Export chat"
-          >
-            <Download className="h-4 w-4" />
-          </button>
-          
-          {/* Web Search */}
           <button
             onClick={() => setWebSearch(!webSearch)}
-            className={`p-1.5 rounded-lg transition-colors ${webSearch ? "text-cyan-400 bg-cyan-500/10" : "text-zinc-500 hover:text-white hover:bg-white/5"}`}
+            className={`p-1.5 rounded-md transition-colors ${webSearch ? "text-cyan-400 bg-cyan-500/10" : "text-zinc-600 hover:text-zinc-400 hover:bg-white/5"}`}
             title="Web search"
           >
-            <Globe className="h-4 w-4" />
+            <Globe className="h-3.5 w-3.5" />
           </button>
           
-          {/* Maximize/Restore */}
           <button
             onClick={() => setIsMaximized(!isMaximized)}
-            className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5"
-            title={isMaximized ? "Restore" : "Maximize"}
+            className="p-1.5 rounded-md text-zinc-600 hover:text-zinc-400 hover:bg-white/5"
           >
-            {isMaximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            {isMaximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
           </button>
           
-          {/* Minimize to PIP */}
           {!isMaximized && (
             <button
               onClick={() => setIsExpanded(false)}
-              className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5"
-              title="Minimize"
+              className="p-1.5 rounded-md text-zinc-600 hover:text-zinc-400 hover:bg-white/5"
             >
-              <Minimize2 className="h-4 w-4" />
+              <Minimize2 className="h-3.5 w-3.5" />
             </button>
           )}
           
-          {/* Close */}
           <button 
             onClick={onClose} 
-            className="p-1.5 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-red-500/10"
+            className="p-1.5 rounded-md text-zinc-600 hover:text-rose-400 hover:bg-rose-500/10"
           >
-            <X className="h-4 w-4" />
+            <X className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
 
       {/* Documents Panel */}
-      <div className="border-b border-white/5">
-        <button 
-          onClick={() => setShowDocs(!showDocs)}
-          className="w-full px-4 py-2.5 flex items-center justify-between text-xs text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
-        >
-          <span className="flex items-center gap-1.5">
-            <Layers className="h-3.5 w-3.5" />
-            {sameCompanyAnnouncements.length + 1} documents available
-            {multiDocMode && <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[10px]">MULTI</span>}
-          </span>
-          {showDocs ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-        </button>
+        <div className="border-b border-white/5">
+          <button 
+            onClick={() => setShowDocs(!showDocs)}
+            className="w-full px-4 py-2.5 flex items-center justify-between text-xs text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              <Layers className="h-3.5 w-3.5 flex-shrink-0" />
+              <span className="truncate">{sameCompanyAnnouncements.length + 1} docs</span>
+              {multiDocMode && <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 text-[10px] flex-shrink-0">MULTI</span>}
+            </span>
+            {showDocs ? <ChevronUp className="h-3.5 w-3.5 flex-shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 flex-shrink-0" />}
+          </button>
         
         {showDocs && (
           <div className="px-2 pb-2 space-y-1 max-h-52 overflow-y-auto">
@@ -1437,38 +1606,37 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
         )}
       </div>
 
-      {/* Messages */}
+      {/* Messages - Clean minimal styling */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((m) => (
-          <div key={m.id} className={`flex gap-3 ${m.role === "user" ? "flex-row-reverse" : ""}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-              m.role === "user" ? "bg-white/10" : "bg-gradient-to-br from-cyan-500 to-blue-600"
+          <div key={m.id} className={`flex gap-2.5 ${m.role === "user" ? "flex-row-reverse" : ""}`}>
+            <div className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${
+              m.role === "user" ? "bg-white/10" : "bg-gradient-to-br from-cyan-500/80 to-blue-600/80"
             }`}>
-              {m.role === "user" ? <User className="h-4 w-4 text-zinc-400" /> : <Bot className="h-4 w-4 text-white" />}
+              {m.role === "user" ? <User className="h-3 w-3 text-zinc-400" /> : <Sparkles className="h-3 w-3 text-white" />}
             </div>
 
-              <div className={`max-w-[92%] ${m.role === "user" ? "text-right" : ""}`}>
-                <div className={`group relative rounded-2xl px-4 py-3 ${m.role === "user" ? "bg-white/10" : "bg-white/5 border border-white/5"}`}>
+              <div className={`max-w-[90%] ${m.role === "user" ? "text-right" : ""}`}>
+                <div className={`group relative rounded-lg px-3 py-2 ${m.role === "user" ? "bg-white/5" : "bg-transparent"}`}>
                   {m.role === "assistant" ? (
                     <>
                       {renderMarkdown(m.content)}
                       {m.isStreaming && (
-                        <span className="inline-block w-2 h-4 ml-1 bg-cyan-400 animate-pulse rounded-sm" />
+                        <span className="inline-block w-1.5 h-4 ml-0.5 bg-cyan-400 animate-pulse rounded-sm" />
                       )}
                     </>
                   ) : (
-                    <p className="text-sm md:text-base text-zinc-300 leading-relaxed whitespace-pre-wrap">
+                    <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">
                       {m.content}
                     </p>
                   )}
                 
-                  {/* Copy button */}
-                  {m.role === "assistant" && (
+                  {m.role === "assistant" && !m.isStreaming && (
                     <button 
                       onClick={() => copyMessage(m.content)}
-                      className="absolute top-2 right-2 p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-white/10 transition-all"
+                      className="absolute top-1 right-1 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-white/10 transition-all"
                     >
-                      <Copy className="h-3.5 w-3.5 text-zinc-500" />
+                      <Copy className="h-3 w-3 text-zinc-600" />
                     </button>
                   )}
                 </div>
@@ -1479,39 +1647,28 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
                 ))}
 
 
-              {/* PDF Citations - Enhanced Display with Multi-Doc support */}
-                {m.citations && m.citations.length > 0 && (
-                  <div className="mt-4 p-4 rounded-xl bg-gradient-to-br from-cyan-500/5 to-blue-500/5 border border-cyan-500/20">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="w-6 h-6 rounded-lg bg-cyan-500/20 flex items-center justify-center">
-                        <FileText className="h-3.5 w-3.5 text-cyan-400" />
+              {/* PDF Citations - Enhanced Display with Popovers */}
+                  {m.citations && m.citations.length > 0 && (
+                    <div className="mt-4 p-4 rounded-xl bg-gradient-to-br from-cyan-500/5 to-blue-500/5 border border-cyan-500/20">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="w-6 h-6 rounded-lg bg-cyan-500/20 flex items-center justify-center">
+                          <FileText className="h-3.5 w-3.5 text-cyan-400" />
+                        </div>
+                        <span className="text-xs font-medium text-cyan-400">Sources from PDF{multiDocMode && m.citations.some(c => c.headline) ? 's' : ''}</span>
+                        <span className="text-[10px] text-zinc-600">Click to preview</span>
                       </div>
-                      <span className="text-xs font-medium text-cyan-400">📄 Sources from PDF{multiDocMode && m.citations.some(c => c.headline) ? 's' : ''}</span>
+                      <div className="grid gap-2">
+                        {m.citations.map((c, i) => (
+                          <CitationCard 
+                            key={i} 
+                            citation={c} 
+                            index={i} 
+                            multiDocMode={multiDocMode && m.citations!.some(c => c.headline)} 
+                          />
+                        ))}
+                      </div>
                     </div>
-                    <div className="grid gap-2">
-                      {m.citations.map((c, i) => (
-                        <a
-                          key={i}
-                          href={c.openUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="group flex items-start gap-3 p-3 rounded-lg bg-zinc-900/50 border border-white/10 hover:bg-cyan-500/10 hover:border-cyan-500/30 transition-all"
-                        >
-                          <div className="w-10 h-10 rounded-lg bg-cyan-500/20 flex items-center justify-center flex-shrink-0">
-                            <span className="text-xs font-bold text-cyan-400">P{c.page}</span>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            {c.headline && (
-                              <p className="text-[10px] text-cyan-500 font-medium mb-1 truncate">📑 {c.headline}...</p>
-                            )}
-                            <p className="text-[11px] text-zinc-400 line-clamp-2 leading-normal">{c.snippet || `Content from page ${c.page}`}</p>
-                          </div>
-                          <ExternalLink className="h-3.5 w-3.5 text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5" />
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                  )}
 
               {/* Web Sources - Enhanced Display */}
               {m.webSources && m.webSources.length > 0 && (
@@ -1572,16 +1729,15 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
                 </div>
               )}
 
-              {/* Smart Keyword Tags */}
+              {/* Smart Keyword Tags - Minimal */}
               {m.role === "assistant" && getKeywordTags(m.content).length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2">
+                <div className="mt-2 flex flex-wrap gap-1.5">
                   {getKeywordTags(m.content).map(({ key, config }) => (
                     <span
                       key={key}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs ${config.bg} ${config.border} ${config.color}`}
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] ${config.bg} ${config.border} ${config.color} border`}
                     >
-                      <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                      <span>{config.label}</span>
+                      {config.label}
                     </span>
                   ))}
                 </div>
@@ -1589,74 +1745,56 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
 
               {/* User Attachments */}
               {m.role === "user" && m.attachments && m.attachments.length > 0 && (
-                <div className="mt-2.5 flex gap-2 flex-wrap">
+                <div className="mt-2 flex gap-1.5 flex-wrap">
                   {m.attachments.map((att, i) => (
-                    <div key={i} className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-white/10 border border-white/20 text-[10px] text-zinc-300">
-                      {att.type.startsWith('image/') ? <ImageIcon className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
-                      <span className="truncate max-w-[120px]">{att.name}</span>
+                    <div key={i} className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/5 text-[10px] text-zinc-400">
+                      {att.type.startsWith('image/') ? <ImageIcon className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
+                      <span className="truncate max-w-[100px]">{att.name}</span>
                     </div>
                   ))}
                 </div>
               )}
 
-              {/* TTS Button for Assistant Messages */}
-              {m.role === "assistant" && (
-                <div className="mt-3 flex items-center gap-2">
+              {/* Message Rating - Minimal */}
+              {m.role === "assistant" && !m.isStreaming && (
+                <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600">
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => handleRateMessage(m.id, 'up')}
+                      className={`p-1 rounded transition-all ${
+                        m.rating === 'up' ? 'bg-emerald-500/20 text-emerald-400' : 'hover:bg-white/5 hover:text-zinc-400'
+                      }`}
+                    >
+                      <ThumbsUp className="h-3 w-3" />
+                    </button>
+                    <button
+                      onClick={() => handleRateMessage(m.id, 'down')}
+                      className={`p-1 rounded transition-all ${
+                        m.rating === 'down' ? 'bg-rose-500/20 text-rose-400' : 'hover:bg-white/5 hover:text-zinc-400'
+                      }`}
+                    >
+                      <ThumbsDown className="h-3 w-3" />
+                    </button>
+                  </div>
                   <button
                     onClick={() => speakMessage(m.content)}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-all ${
-                      isSpeaking ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'bg-white/5 text-zinc-500 hover:text-white hover:bg-white/10 border border-transparent'
-                    }`}
-                    title={isSpeaking ? "Stop speaking" : "Listen to response"}
+                    className={`p-1 rounded transition-all ${isSpeaking ? 'text-cyan-400' : 'hover:bg-white/5 hover:text-zinc-400'}`}
                   >
-                    {isSpeaking ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
-                    {isSpeaking ? 'Speaking...' : 'Listen to Pip'}
+                    {isSpeaking ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
                   </button>
                 </div>
               )}
 
-              {/* Message Rating */}
-              {m.role === "assistant" && !m.isStreaming && (
-                <div className="mt-2.5 flex items-center gap-2.5 text-xs text-zinc-500 px-1">
-                  <span>Was this helpful?</span>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => handleRateMessage(m.id, 'up')}
-                      className={`p-1.5 rounded-full border flex items-center justify-center transition-all ${
-                        m.rating === 'up'
-                          ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300'
-                          : 'border-transparent hover:bg-white/5 hover:text-emerald-300'
-                      }`}
-                      title="Helpful"
-                    >
-                      <ThumbsUp className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleRateMessage(m.id, 'down')}
-                      className={`p-1.5 rounded-full border flex items-center justify-center transition-all ${
-                        m.rating === 'down'
-                          ? 'bg-rose-500/20 border-rose-500/60 text-rose-300'
-                          : 'border-transparent hover:bg-white/5 hover:text-rose-300'
-                      }`}
-                      title="Not helpful"
-                    >
-                      <ThumbsDown className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Follow-up Questions */}
+              {/* Follow-up Questions - Minimal pills */}
               {m.role === "assistant" && m.suggestedQuestions && m.suggestedQuestions.length > 0 && (
-                <div className="mt-4 flex gap-2 flex-wrap">
+                <div className="mt-3 flex gap-1.5 flex-wrap">
                   {m.suggestedQuestions.map((q, i) => (
                     <button
                       key={i}
                       onClick={() => send(q)}
                       disabled={isLoading}
-                      className="group/btn inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white/5 border border-white/10 text-xs text-zinc-400 hover:text-white hover:border-cyan-500/40 hover:bg-cyan-500/10 transition-all disabled:opacity-50"
+                      className="px-2.5 py-1 rounded-md bg-white/5 border border-white/5 text-[11px] text-zinc-500 hover:text-white hover:border-white/10 hover:bg-white/10 transition-all disabled:opacity-50"
                     >
-                      <ChevronRight className="h-3 w-3 text-cyan-500 opacity-0 group-hover/btn:opacity-100 -ml-1 transition-all" />
                       {q}
                     </button>
                   ))}
@@ -1667,15 +1805,15 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
         ))}
 
         {isLoading && (
-          <div className="flex gap-3">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
-              <Loader2 className="h-4 w-4 text-white animate-spin" />
+          <div className="flex gap-2.5">
+            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-cyan-500/80 to-blue-600/80 flex items-center justify-center">
+              <Loader2 className="h-3 w-3 text-white animate-spin" />
             </div>
-            <div className="px-4 py-3 rounded-2xl bg-white/5">
-              <div className="flex gap-1.5">
-                <span className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                <span className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                <span className="w-2 h-2 bg-cyan-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+            <div className="px-3 py-2">
+              <div className="flex gap-1">
+                <span className="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                <span className="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                <span className="w-1.5 h-1.5 bg-zinc-600 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
               </div>
             </div>
           </div>
@@ -1699,16 +1837,14 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
         </div>
       )}
 
-      {/* Input */}
-      <div className="p-4 border-t border-white/5 bg-zinc-900/60 sticky bottom-0">
-        <div className="flex items-center gap-1.5 p-1.5 rounded-2xl bg-zinc-950 border border-white/10 focus-within:border-cyan-500/40 focus-within:ring-1 focus-within:ring-cyan-500/20 transition-all shadow-inner">
-          {/* File Attach Button */}
+      {/* Input - Ultra minimal */}
+      <div className="p-3 border-t border-white/5 bg-zinc-950">
+        <div className="flex items-center gap-1 p-1 rounded-lg bg-zinc-900/50 border border-white/5 focus-within:border-white/10 transition-all">
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="p-2.5 rounded-xl text-zinc-500 hover:text-cyan-400 hover:bg-white/5 transition-all"
-            title="Attach file"
+            className="p-2 rounded-md text-zinc-600 hover:text-zinc-400 hover:bg-white/5 transition-all"
           >
-            <Paperclip className="h-5 w-5" />
+            <Paperclip className="h-4 w-4" />
           </button>
           <input
             ref={fileInputRef}
@@ -1725,40 +1861,41 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && send()}
-            placeholder="Ask SpeedyPip anything..."
-            className="flex-1 px-3 py-2.5 bg-transparent text-white text-sm md:text-base placeholder:text-zinc-600 outline-none"
+            placeholder="Ask anything..."
+            className="flex-1 px-2 py-2 bg-transparent text-white text-sm placeholder:text-zinc-600 outline-none"
             disabled={isLoading}
           />
           
           <button
             onClick={toggleVoice}
-            className={`p-2.5 rounded-xl transition-all ${isRecording ? "bg-red-500 text-white animate-pulse" : "text-zinc-500 hover:text-white hover:bg-white/5"}`}
+            className={`p-2 rounded-md transition-all ${isRecording ? "bg-rose-500/20 text-rose-400" : "text-zinc-600 hover:text-zinc-400 hover:bg-white/5"}`}
           >
-            {isRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+            {isRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
           </button>
           
           <button
             onClick={() => send()}
             disabled={!input.trim() || isLoading}
-            className="p-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 text-white disabled:opacity-20 hover:shadow-lg hover:shadow-cyan-500/20 transition-all active:scale-95"
+            className="p-2 rounded-md bg-white text-zinc-950 disabled:opacity-20 hover:bg-zinc-200 transition-all"
           >
-            <Send className="h-5 w-5" />
+            <Send className="h-4 w-4" />
           </button>
         </div>
         
-        {/* Status */}
-        <div className="flex items-center justify-center gap-3 mt-2.5">
-          {webSearch && (
-            <span className="text-[10px] text-cyan-400 flex items-center gap-1 font-medium bg-cyan-500/10 px-2 py-0.5 rounded-full border border-cyan-500/20">
-              <Globe className="h-3 w-3" /> Web Intelligence Active
-            </span>
-          )}
-          {multiDocMode && (
-            <span className="text-[10px] text-purple-400 flex items-center gap-1 font-medium bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20">
-              <Layers className="h-3 w-3" /> {selectedDocs.length} Docs Indexed
-            </span>
-          )}
-        </div>
+        {(webSearch || multiDocMode) && (
+          <div className="flex items-center justify-center gap-2 mt-2">
+            {webSearch && (
+              <span className="text-[9px] text-cyan-400/70 flex items-center gap-1 font-medium">
+                <Globe className="h-2.5 w-2.5" /> Web
+              </span>
+            )}
+            {multiDocMode && (
+              <span className="text-[9px] text-purple-400/70 flex items-center gap-1 font-medium">
+                <Layers className="h-2.5 w-2.5" /> {selectedDocs.length} docs
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
