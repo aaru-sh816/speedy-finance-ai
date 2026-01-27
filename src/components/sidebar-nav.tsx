@@ -1,8 +1,9 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Megaphone, FileText, Calendar, Printer, Bell, ChevronLeft, ChevronRight } from "lucide-react"
+import { Megaphone, FileText, Calendar, Printer, Bell, ChevronLeft, ChevronRight, Mic2 } from "lucide-react"
 import Link from "next/link"
+import { VoiceAnalyst } from "./VoiceAnalyst"
 
 interface NavItem {
   id: string
@@ -10,10 +11,12 @@ interface NavItem {
   label: string
   href?: string
   badge?: number
+  isAction?: boolean
 }
 
 const NAV_ITEMS: NavItem[] = [
   { id: "announcements", icon: Megaphone, label: "Today", href: "/announcements", badge: undefined },
+  { id: "voice", icon: Mic2, label: "Voice Oracle", isAction: true },
   { id: "documents", icon: FileText, label: "Documents", href: "/documents" },
   { id: "calendar", icon: Calendar, label: "Calendar", href: "/calendar" },
   { id: "alerts", icon: Bell, label: "Alerts", href: "/alerts" },
@@ -32,6 +35,7 @@ export function SidebarNav({ activeId = "announcements", newCount, onCollapseCha
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const [isVoiceOpen, setIsVoiceOpen] = useState(false)
 
   // Load collapsed state from localStorage
   useEffect(() => {
@@ -78,27 +82,43 @@ export function SidebarNav({ activeId = "announcements", newCount, onCollapseCha
           const isActive = activeId === item.id
           const isHovered = hoveredId === item.id
 
-          return (
-            <Link
-              key={item.id}
-              href={item.href || "#"}
-              className="relative group"
-              onMouseEnter={() => setHoveredId(item.id)}
-              onMouseLeave={() => setHoveredId(null)}
+          const content = (
+            <div
+              className={`
+                w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200
+                ${isActive 
+                  ? "bg-gradient-to-br from-cyan-500 to-blue-500 shadow-lg shadow-cyan-500/30" 
+                  : "hover:bg-white/10"
+                }
+                ${item.id === 'voice' ? 'bg-cyan-500/10 border border-cyan-500/20' : ''}
+              `}
             >
-              <div
-                className={`
-                  w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200
-                  ${isActive 
-                    ? "bg-gradient-to-br from-cyan-500 to-blue-500 shadow-lg shadow-cyan-500/30" 
-                    : "hover:bg-white/10"
-                  }
-                `}
-              >
-                <Icon 
-                  className={`h-5 w-5 transition-colors ${isActive ? "text-white" : "text-zinc-400 group-hover:text-white"}`} 
-                />
-              </div>
+              <Icon 
+                className={`h-5 w-5 transition-colors ${isActive ? "text-white" : item.id === 'voice' ? 'text-cyan-400' : "text-zinc-400 group-hover:text-white"}`} 
+              />
+            </div>
+          )
+
+          return (
+            <div key={item.id} className="relative group">
+              {item.isAction ? (
+                <button
+                  onClick={() => item.id === 'voice' && setIsVoiceOpen(true)}
+                  onMouseEnter={() => setHoveredId(item.id)}
+                  onMouseLeave={() => setHoveredId(null)}
+                  className="w-full"
+                >
+                  {content}
+                </button>
+              ) : (
+                <Link
+                  href={item.href || "#"}
+                  onMouseEnter={() => setHoveredId(item.id)}
+                  onMouseLeave={() => setHoveredId(null)}
+                >
+                  {content}
+                </Link>
+              )}
 
               {/* Tooltip */}
               <div
@@ -119,7 +139,7 @@ export function SidebarNav({ activeId = "announcements", newCount, onCollapseCha
                   {item.badge}
                 </span>
               )}
-            </Link>
+            </div>
           )
         })}
       </div>
@@ -153,6 +173,12 @@ export function SidebarNav({ activeId = "announcements", newCount, onCollapseCha
           </div>
         </button>
       )}
+
+      {/* Voice Analyst Modal */}
+      <VoiceAnalyst 
+        isOpen={isVoiceOpen} 
+        onClose={() => setIsVoiceOpen(false)} 
+      />
     </>
   )
 }

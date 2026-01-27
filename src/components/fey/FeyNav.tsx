@@ -2,12 +2,14 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { motion, AnimatePresence } from "framer-motion"
 import { 
   Home, 
-  TrendingUp, 
-  Calendar, 
-  FileText, 
-  BarChart3
+  Compass,
+  Calendar,
+  Bookmark,
+  LineChart,
+  Search
 } from "lucide-react"
 
 interface NavItem {
@@ -18,56 +20,73 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { icon: Home, label: "Home", href: "/" },
-  { icon: TrendingUp, label: "Market", href: "/market" },
+  { icon: Compass, label: "Market", href: "/market" },
   { icon: Calendar, label: "Announcements", href: "/announcements" },
-  { icon: FileText, label: "Bulk Deals", href: "/bulk-deals" },
-  { icon: BarChart3, label: "Corporate Actions", href: "/corporate-actions" },
+  { icon: Bookmark, label: "Bulk Deals", href: "/bulk-deals" },
+  { icon: LineChart, label: "Corporate Actions", href: "/corporate-actions" },
 ]
+
+/**
+ * Custom Calendar 31 Icon for Fey Aesthetic
+ */
+function Calendar31Icon({ className }: { className?: string }) {
+  return (
+    <div className={`relative ${className}`}>
+      <Calendar className="w-full h-full" strokeWidth={1.5} />
+      <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold mt-1.5">31</span>
+    </div>
+  )
+}
 
 export function FeyNav() {
   const pathname = usePathname()
 
   return (
-    <nav className="fixed md:fixed top-auto bottom-6 md:top-2 md:bottom-auto w-full z-[100] animate-in fade-in slide-in-from-bottom-4 md:slide-in-from-top-4 duration-1000 md:py-0 pointer-events-none">
-      <div className="flex items-center justify-center px-4">
-        <div className="flex items-center gap-1.5 p-1 md:p-1.5 bg-zinc-950/80 backdrop-blur-3xl border border-white/10 rounded-full shadow-[0_20px_50px_rgba(0,0,0,0.5)] transition-all duration-700 hover:border-white/20 pointer-events-auto">
+    <nav className="fixed top-8 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-4 pointer-events-none">
+      {/* Main Navigation Pill */}
+      <div className="flex items-center gap-1.5 p-1.5 rounded-full pointer-events-auto bg-[linear-gradient(180deg,rgba(20,20,22,0.85)_0%,rgba(10,10,12,0.85)_100%)] backdrop-blur-[21px] shadow-[inset_1.25px_1.25px_1.25px_rgba(255,255,255,0.06),inset_1.25px_-1.25px_1.25px_rgba(255,255,255,0.02),0_43px_43px_rgba(0,0,0,0.85)] border border-white/5">
+        
         {navItems.map((item) => {
           const isActive = pathname === item.href
-          return (
-            <NavButton
-              key={item.href}
-              icon={item.icon}
-              label={item.label}
-              href={item.href}
-              isActive={isActive}
-            />
-          )
-          })}
-        </div>
-      </div>
-    </nav>
-  )
-}
+          let Icon = item.icon
+          
+          if (item.label === "Announcements") Icon = Calendar31Icon
 
-function NavButton({ icon: Icon, label, href, isActive }: NavItem & { isActive: boolean }) {
-  return (
-    <Link href={href}>
-      <button
-        className={`group relative p-2.5 md:p-3 rounded-full
-          transition-all duration-500
-          hover:scale-110 active:scale-90
-          ${isActive ? 'bg-cyan-500/20 border border-cyan-500/30' : 'hover:bg-zinc-800/50'}`}
-        aria-label={label}
-      >
-        <Icon className={`w-4 h-4 md:w-5 md:h-5 transition-all duration-500
-          ${isActive ? 'text-cyan-400 scale-110' : 'text-zinc-400 group-hover:text-white'}`} />
-        
-        {/* Tooltip - Responsive positioning */}
-        <span className="absolute bottom-full md:bottom-auto md:-bottom-12 left-1/2 -translate-x-1/2 mb-3 md:mb-0 px-2 py-1 rounded-lg bg-zinc-900/90 backdrop-blur-xl border border-white/10 text-[10px] md:text-xs text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none transform translate-y-1 group-hover:translate-y-0">
-          {label}
-        </span>
+          return (
+            <Link key={item.href} href={item.href}>
+              <button
+                className="group relative p-2.5 rounded-full transition-all duration-300 hover:scale-110 active:scale-95"
+                aria-label={item.label}
+              >
+                {/* Active Fluid Indicator */}
+                {isActive && (
+                  <motion.div
+                    layoutId="fey-nav-indicator"
+                    className="absolute inset-0 bg-white/[0.05] rounded-full shadow-[0_0_15px_rgba(255,255,255,0.05)]"
+                    transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                  />
+                )}
+                
+                <Icon className={`w-5 h-5 transition-all duration-300 relative z-10 ${isActive ? 'text-white' : 'text-zinc-500 group-hover:text-zinc-300'}`} 
+                  strokeWidth={isActive ? 2 : 1.5}
+                  fill={isActive && item.label === "Home" ? "currentColor" : "none"}
+                />
+
+                  {/* Tooltip */}
+                  <span className="absolute top-14 left-1/2 -translate-x-1/2 px-2.5 py-1.5 rounded-xl bg-black/90 backdrop-blur-xl border border-white/5 text-[10px] font-medium text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none -translate-y-2 group-hover:translate-y-0">
+                    {item.label}
+                  </span>
+              </button>
+            </Link>
+          )
+        })}
+      </div>
+
+      {/* Separate Search "Satellite" */}
+      <button className="w-12 h-12 rounded-full flex items-center justify-center pointer-events-auto bg-[linear-gradient(180deg,rgba(20,20,22,0.85)_0%,rgba(10,10,12,0.85)_100%)] backdrop-blur-[21px] shadow-[inset_1.25px_1.25px_1.25px_rgba(255,255,255,0.06),inset_1.25px_-1.25px_1.25px_rgba(255,255,255,0.02),0_10px_30px_rgba(0,0,0,0.6)] border border-white/5 hover:scale-110 active:scale-95 transition-all duration-300 group">
+        <Search className="w-5 h-5 text-zinc-500 group-hover:text-white transition-colors" strokeWidth={1.5} />
       </button>
-    </Link>
+    </nav>
   )
 }
 

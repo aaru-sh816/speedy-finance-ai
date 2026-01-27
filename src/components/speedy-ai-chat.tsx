@@ -7,11 +7,15 @@ import {
   Upload, Paperclip, Image, File, Check, Clock, Search,
   Building2, ArrowRight, Star, Layers, Activity, Volume2,
   VolumeX, Mic, MicOff, Globe, Download, Copy, ExternalLink,
-  ChevronLeft, ChevronRight, Loader2, Play, Pause, RefreshCw
-} from "lucide-react"
+    ChevronLeft, ChevronRight, Loader2, Play, Pause, RefreshCw, Phone, Mic2
+    } from "lucide-react"
 import type { BSEAnnouncement } from "@/lib/bse/types"
+import { PersonaPlexVoice } from "./personaplex-voice"
+import { VoiceAnalyst } from "./VoiceAnalyst"
+
 
 interface PdfCitation {
+
   page: number
   snippet: string
   openUrl: string
@@ -61,8 +65,10 @@ export function SpeedyAIChat({ announcement, isOpen, onClose, recentAnnouncement
   const [showDocPanel, setShowDocPanel] = useState(true)
   const [isRecording, setIsRecording] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
-  const [autoSpeak, setAutoSpeak] = useState(false)
-  const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
+    const [autoSpeak, setAutoSpeak] = useState(false)
+    const [isVoiceOracleOpen, setIsVoiceOracleOpen] = useState(false)
+    const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
+
   const [showWebSearch, setShowWebSearch] = useState(false)
   const [stockPrice, setStockPrice] = useState<{ price: number; change: number } | null>(null)
   
@@ -509,10 +515,24 @@ ${announcement.pdfUrl ? "- **PDF**: Ready for analysis ✅" : "- **PDF**: Not av
           {showDocPanel ? <ChevronLeft className="h-4 w-4 text-zinc-400" /> : <ChevronRight className="h-4 w-4 text-zinc-400" />}
         </button>
 
-        {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950">
-          
-          {/* Header */}
+          {/* Main Chat Area */}
+          <div className="flex-1 flex flex-col bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950 relative">
+            
+            {/* Integrated Voice Oracle Overlay */}
+            {isVoiceOracleOpen && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 w-[90%] max-w-md pointer-events-auto">
+                <VoiceAnalyst 
+                  isOpen={isVoiceOracleOpen} 
+                  onClose={() => setIsVoiceOracleOpen(false)}
+                  ticker={announcement.ticker}
+                  company={announcement.company}
+                  variant="integrated"
+                />
+              </div>
+            )}
+
+            {/* Header */}
+
           <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-black/40">
             <div className="flex items-center gap-4">
               {/* AI Avatar */}
@@ -556,6 +576,15 @@ ${announcement.pdfUrl ? "- **PDF**: Ready for analysis ✅" : "- **PDF**: Not av
 
             {/* Header Actions */}
             <div className="flex items-center gap-2">
+              {/* Voice Oracle Toggle */}
+              <button
+                onClick={() => setIsVoiceOracleOpen(!isVoiceOracleOpen)}
+                className={`p-2.5 rounded-xl transition-all ${isVoiceOracleOpen ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shadow-[0_0_15px_-3px_rgba(6,182,212,0.4)]" : "bg-white/5 text-zinc-400 hover:text-white"}`}
+                title={isVoiceOracleOpen ? "Close Voice Oracle" : "Open Voice Oracle"}
+              >
+                <Mic2 className="h-5 w-5" />
+              </button>
+
               {/* Voice Toggle */}
               <button
                 onClick={() => setAutoSpeak(!autoSpeak)}

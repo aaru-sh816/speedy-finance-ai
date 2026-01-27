@@ -19,11 +19,29 @@ export function getBSEStockUrl(company: string, ticker: string, scripCode: strin
 
 /**
  * Generate BSE announcement PDF URL
+ * BSE uses AttachLive for recent announcements and AttachHis for historical ones
+ * We return both URLs for fallback attempts
  */
 export function getBSEPdfUrl(attachmentName: string): string {
   if (!attachmentName) return ""
   if (attachmentName.startsWith("http")) return attachmentName
-  return `https://www.bseindia.com/xml-data/corpfiling/AttachLive/${attachmentName}`
+  return `https://www.bseindia.com/xml-data/corpfiling/AttachHis/${attachmentName}`
+}
+
+/**
+ * Get both Live and Historical PDF URLs for fallback
+ */
+export function getBSEPdfUrls(attachmentName: string): { live: string; historical: string } {
+  if (!attachmentName) return { live: "", historical: "" }
+  if (attachmentName.startsWith("http")) {
+    const historical = attachmentName.replace('/AttachLive/', '/AttachHis/')
+    const live = attachmentName.replace('/AttachHis/', '/AttachLive/')
+    return { live, historical }
+  }
+  return {
+    live: `https://www.bseindia.com/xml-data/corpfiling/AttachLive/${attachmentName}`,
+    historical: `https://www.bseindia.com/xml-data/corpfiling/AttachHis/${attachmentName}`
+  }
 }
 
 /**

@@ -476,40 +476,61 @@ export async function POST(request: Request) {
     // Process ALL documents in multi-doc mode
     const allHits: { text: string; page: number; score: number; pdfUrl: string; docId: string; headline: string }[] = []
     
-    for (const ann of announcementsToProcess) {
-      if (!ann.pdfUrl) continue
+    // Detect page number boost
+    const pageMatch = message.match(/page\s*(\d+)/i)
+    const boostPage = pageMatch ? parseInt(pageMatch[1]) : undefined
+    if (boostPage) console.log(`[Chat] Boosting page ${boostPage} for query: ${message}`)
 
+    // Process documents in parallel for world-class speed
+    const processDocument = async (ann: AnnouncementData) => {
+      if (!ann.pdfUrl) return null
       try {
         const visionResult = await extractPdfWithVision(ann.pdfUrl, openaiKey)
         
-        if (visionResult.allEntities.length > 0) {
-          extractedEntities.push(...visionResult.allEntities.map(e => ({ ...e, docId: ann.id })))
-        }
-        
-        if (visionResult.tables.length > 0) {
-          extractedTables.push(...visionResult.tables.map(t => ({ ...t, docId: ann.id })))
-        }
+        // Parallelize indexing and result collection
+        const indexPromise = visionResult.pages.length > 0 
+          ? ensureIndexed(ann.pdfUrl, visionResult.pages, openaiKey)
+          : Promise.resolve()
 
-        if (visionResult.pages.length > 0) {
-          const chunks = chunkPages(visionResult.pages.map(p => ({ page: p.page, text: p.text })), 800)
-          
-          if (chunks.length > 0) {
-            await ensureIndexed(ann.pdfUrl, visionResult.pages, openaiKey)
-            const [qEmb] = await embedTexts(openaiKey, [message])
-            const hits = await topK(ann.pdfUrl, qEmb, multiDocMode ? 8 : 15)
-            
-            for (const hit of hits) {
-              allHits.push({
-                ...hit,
-                pdfUrl: ann.pdfUrl,
-                docId: ann.id,
-                headline: ann.headline.slice(0, 60)
-              })
-            }
-          }
+        const [qEmb] = await embedTexts(openaiKey, [message])
+        const hits = await topK(ann.pdfUrl, qEmb, multiDocMode ? 8 : 15, boostPage)
+        
+        return {
+          annId: ann.id,
+          visionResult,
+          hits: hits.map(hit => ({
+            ...hit,
+            pdfUrl: ann.pdfUrl!,
+            docId: ann.id,
+            headline: ann.headline.slice(0, 60)
+          }))
         }
       } catch (e) {
-        console.error(`PDF extraction failed for ${ann.id}:`, e)
+        console.error(`[Chat] Failed to process ${ann.id}:`, e)
+        return null
+      }
+    }
+
+    // Process in batches to avoid overwhelming services
+    const processedResults: any[] = []
+    const BATCH_SIZE = 10
+    for (let i = 0; i < announcementsToProcess.length; i += BATCH_SIZE) {
+      const batch = announcementsToProcess.slice(i, i + BATCH_SIZE)
+      const results = await Promise.all(batch.map(processDocument))
+      
+      for (const res of results) {
+        if (!res) continue
+        processedResults.push(res)
+        
+        if (res.visionResult.allEntities.length > 0) {
+          extractedEntities.push(...res.visionResult.allEntities.map(e => ({ ...e, docId: res.annId })))
+        }
+        
+        if (res.visionResult.tables.length > 0) {
+          extractedTables.push(...res.visionResult.tables.map(t => ({ ...t, docId: res.annId })))
+        }
+
+        allHits.push(...res.hits)
       }
     }
 
@@ -545,56 +566,54 @@ export async function POST(request: Request) {
     }
 
     // ALWAYS include full raw text for summary, info, and general queries
-    const needsFullText = /who|name|allott|director|shareholder|investor|person|list.*all|summary|highlight|key|important|what|detail|tell me|explain|about|content|read|extract|number|date|amount|give|show|provide/i.test(message)
+    const needsFullText = /who|name|allott|director|shareholder|investor|person|list.*all|summary|highlight|key|important|what|detail|tell me|explain|about|content|read|extract|number|date|amount|give|show|provide|compare|comparison|tabular|table|versus|vs/i.test(message)
     
     console.log(`[Chat] Processing query: "${message.slice(0, 50)}...", needsFullText=${needsFullText}`)
     
-    // For summary-type queries, we MUST include the full PDF text
-    for (const ann of announcementsToProcess.slice(0, 3)) {
-      if (!ann.pdfUrl) {
-        console.log(`[Chat] No PDF URL for announcement ${ann.id}`)
-        continue
-      }
-      try {
-        console.log(`[Chat] Extracting PDF from: ${ann.pdfUrl.slice(0, 80)}...`)
-        const visionResult = await extractPdfWithVision(ann.pdfUrl, openaiKey)
-        console.log(`[Chat] PDF extraction result: ${visionResult.rawText?.length || 0} chars, ${visionResult.allEntities?.length || 0} entities`)
+    // For summary-type queries, we include the full PDF text from our processed results
+    const fullTextLimit = multiDocMode ? Math.min(processedResults.length, 5) : 1
+    for (const res of processedResults.slice(0, fullTextLimit)) {
+      const ann = announcementsToProcess.find(a => a.id === res.annId)
+      if (!ann) continue
+
+      const visionResult = res.visionResult
+      if (visionResult.rawText && visionResult.rawText.length > 100) {
+        const docLabel = multiDocMode ? `[${ann.headline.slice(0, 40)}...]` : ""
         
-        if (visionResult.rawText && visionResult.rawText.length > 100) {
-          const docLabel = multiDocMode ? `[${ann.headline.slice(0, 40)}...]` : ""
+        if (needsFullText || message.length < 50) {
+          const maxChars = 50000
+          let addedChars = 0
           
-          // Always add raw text for short queries or explicit summary requests
-          if (needsFullText || message.length < 50) {
-            pdfContext += `\n\n## COMPLETE DOCUMENT TEXT ${docLabel}\n${visionResult.rawText.slice(0, 12000)}`
-            console.log(`[Chat] Added ${Math.min(visionResult.rawText.length, 12000)} chars of PDF text to context`)
-          }
+          pdfContext += `\n\n## FULL DOCUMENT CONTENT ${docLabel}\n`
           
-          // Add extracted entities if available
-          if (visionResult.allEntities.length > 0) {
-            pdfContext += `\n\n## EXTRACTED ENTITIES ${docLabel}\n`
-            const personEntities = visionResult.allEntities.filter(e => e.type === "person")
-            const amountEntities = visionResult.allEntities.filter(e => e.type === "amount")
-            const dateEntities = visionResult.allEntities.filter(e => e.type === "date")
-            const shareEntities = visionResult.allEntities.filter(e => e.type === "shares")
-            
-            if (personEntities.length > 0) {
-              pdfContext += `\n**Names:** ${personEntities.map(e => e.value).join(", ")}`
-            }
-            if (amountEntities.length > 0) {
-              pdfContext += `\n**Amounts:** ${amountEntities.map(e => e.raw).join(", ")}`
-            }
-            if (dateEntities.length > 0) {
-              pdfContext += `\n**Dates:** ${dateEntities.map(e => e.raw).join(", ")}`
-            }
-            if (shareEntities.length > 0) {
-              pdfContext += `\n**Shares:** ${shareEntities.map(e => e.raw).join(", ")}`
-            }
+          for (const pageObj of visionResult.pages) {
+            if (addedChars >= maxChars) break
+            const pageHeader = `\n--- PAGE ${pageObj.page} ---\n`
+            const remainingBudget = maxChars - addedChars
+            const pageTextToAdd = pageObj.text.slice(0, remainingBudget)
+            pdfContext += pageHeader + pageTextToAdd
+            addedChars += pageHeader.length + pageTextToAdd.length
           }
-        } else {
-          console.log(`[Chat] PDF text too short or empty: ${visionResult.rawText?.length || 0} chars`)
+          console.log(`[Chat] Added ${addedChars} chars of page-aware text for ${ann.id}`)
         }
-      } catch (e) {
-        console.error(`[Chat] Full text extraction failed for ${ann.id}:`, e)
+      
+        // Add extracted entities
+        if (visionResult.allEntities.length > 0) {
+          pdfContext += `\n\n## EXTRACTED ENTITIES ${docLabel}\n`
+          const personEntities = visionResult.allEntities.filter((e: any) => e.type === "person")
+          const amountEntities = visionResult.allEntities.filter((e: any) => e.type === "amount")
+          const dateEntities = visionResult.allEntities.filter((e: any) => e.type === "date")
+          const shareEntities = visionResult.allEntities.filter((e: any) => e.type === "shares")
+          
+          if (personEntities.length > 0) outputEntities(personEntities, "Names")
+          if (amountEntities.length > 0) outputEntities(amountEntities, "Amounts")
+          if (dateEntities.length > 0) outputEntities(dateEntities, "Dates")
+          if (shareEntities.length > 0) outputEntities(shareEntities, "Shares")
+
+          function outputEntities(ents: any[], label: string) {
+            pdfContext += `\n**${label}:** ${Array.from(new Set(ents.map(e => e.value || e.raw))).join(", ")}`
+          }
+        }
       }
     }
     

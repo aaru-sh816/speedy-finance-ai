@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { Search, X, Plus, Star, TrendingUp, TrendingDown, Building2, Sparkles, ExternalLink, ArrowRight, Clock, FileText, Calendar, Newspaper, Landmark, Trash2, Megaphone, Filter, ChevronDown, Coins, Gift, Scissors, Users, Briefcase } from "lucide-react"
 import clsx from "clsx"
+import { getWatchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, type WatchlistItem } from "@/lib/storage"
 
 interface SearchResult {
   symbol: string
@@ -127,26 +128,26 @@ export function SearchModal({ isOpen, onClose, onSelectStock }: SearchModalProps
   const [showEventDropdown, setShowEventDropdown] = useState(false)
   
   // Load search history and favourites from localStorage
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const history = localStorage.getItem(SEARCH_HISTORY_KEY)
-      if (history) {
-        try {
-          setSearchHistory(JSON.parse(history))
-        } catch (e) {
-          console.error('Failed to parse search history')
+    useEffect(() => {
+      if (typeof window !== 'undefined') {
+        const history = localStorage.getItem(SEARCH_HISTORY_KEY)
+        if (history) {
+          try {
+            setSearchHistory(JSON.parse(history))
+          } catch (e) {
+            console.error('Failed to parse search history')
+          }
         }
+        const watchlist = getWatchlist()
+        setFavourites(watchlist.map(w => ({
+          symbol: w.symbol,
+          name: w.name,
+          exchange: 'BSE' as const,
+          type: 'stock' as const,
+          scripCode: w.scripCode,
+        })))
       }
-      const favs = localStorage.getItem('speedy-favourites')
-      if (favs) {
-        try {
-          setFavourites(JSON.parse(favs))
-        } catch (e) {
-          console.error('Failed to parse favourites')
-        }
-      }
-    }
-  }, [isOpen])
+    }, [isOpen])
   
   // Add to search history
   const addToHistory = useCallback((term: string) => {
@@ -166,19 +167,29 @@ export function SearchModal({ isOpen, onClose, onSelectStock }: SearchModalProps
   }, [])
   
   // Toggle favourite
-  const toggleFavourite = useCallback((stock: SearchResult) => {
-    setFavourites(prev => {
-      const exists = prev.find(f => f.scripCode === stock.scripCode)
-      let updated: SearchResult[]
-      if (exists) {
-        updated = prev.filter(f => f.scripCode !== stock.scripCode)
+    const toggleFavourite = useCallback((stock: SearchResult) => {
+      if (!stock.scripCode) return
+      
+      const inWatchlist = isInWatchlist(stock.scripCode)
+      if (inWatchlist) {
+        removeFromWatchlist(stock.scripCode)
       } else {
-        updated = [...prev, stock]
+        addToWatchlist({
+          scripCode: stock.scripCode,
+          symbol: stock.symbol,
+          name: stock.name,
+        })
       }
-      localStorage.setItem('speedy-favourites', JSON.stringify(updated))
-      return updated
-    })
-  }, [])
+      
+      const watchlist = getWatchlist()
+      setFavourites(watchlist.map(w => ({
+        symbol: w.symbol,
+        name: w.name,
+        exchange: 'BSE' as const,
+        type: 'stock' as const,
+        scripCode: w.scripCode,
+      })))
+    }, [])
   
   // Check if stock is favourite
   const isFavourite = useCallback((scripCode?: string) => {

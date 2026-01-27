@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { clsx } from "clsx"
 import { TrendingUp, TrendingDown, RefreshCw, ArrowUpRight, ArrowDownRight, LayoutGrid, Zap, Sparkles } from "lucide-react"
-import { LivePulse } from "@/components/fey/LivePulse"
+
 import { RiskRadar } from "@/components/risk-radar"
 import { FeyNav } from "@/components/fey/FeyNav"
 
@@ -244,7 +244,7 @@ Number(stock.changePct || 0) >= 0
 
 {/* Side Column */}
 <div className="lg:w-[450px] flex-shrink-0 space-y-8">
-<LivePulse />
+
 <RiskRadar />
 </div>
 </div>

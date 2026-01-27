@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState, useMemo } from "react"
 import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickData, LineData, Time, SeriesMarker, SeriesMarkerPosition, SeriesMarkerShape, HistogramData } from "lightweight-charts"
-import { AlertTriangle, RefreshCw, Maximize2, Minimize2, Calendar, Clock, Filter, Info, AreaChart, BarChart3, LineChart, CheckCircle2, X, ExternalLink, TrendingUp } from "lucide-react"
+import { AlertTriangle, RefreshCw, Maximize2, Minimize2, Calendar, Clock, Filter, Info, AreaChart, BarChart3, LineChart, CheckCircle2, X, ExternalLink, TrendingUp, Waves } from "lucide-react"
 import { BSEAnnouncement } from "@/lib/bse/types"
 import { cn } from "@/lib/utils"
 import { SentimentBadge } from "@/components/sentiment-badge"
+import type { WhaleDeal } from "@/hooks/useWhaleDeals"
 
 interface OHLCVData {
   time: Time
@@ -40,6 +41,7 @@ interface LightweightChartProps {
   theme?: "light" | "dark"
   type?: "candle" | "line" | "area"
   announcements?: BSEAnnouncement[]
+  whaleDeals?: WhaleDeal[]
   showControls?: boolean
   highlightedAnnouncementId?: string | null
 }
@@ -56,6 +58,14 @@ const RANGE_MAP = {
 
 type RangeKey = keyof typeof RANGE_MAP
 
+interface AggregatedWhaleDeal {
+  date: string;
+  side: 'BUY' | 'SELL';
+  totalValue: number;
+  avgPrice: number;
+  deals: WhaleDeal[];
+}
+
 export function LightweightChart({
   symbol,
   scripCode,
@@ -65,6 +75,7 @@ export function LightweightChart({
   theme = "dark",
   type = "area",
   announcements = [],
+  whaleDeals = [],
   showControls = true,
   highlightedAnnouncementId,
 }: LightweightChartProps) {
@@ -75,27 +86,82 @@ export function LightweightChart({
     const vpCanvasRef = useRef<HTMLCanvasElement>(null)
 
   
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [isFullscreen, setIsFullscreen] = useState(false)
-  const [activeRange, setActiveRange] = useState<RangeKey>("1M")
-  const [chartData, setChartData] = useState<(CandlestickData | LineData)[]>([])
-  const [visibleAnnouncements, setVisibleAnnouncements] = useState<BSEAnnouncement[]>([])
-  const [currentChartType, setCurrentChartType] = useState<"candle" | "line" | "area">(type)
-  const [tickData, setTickData] = useState(false)
-    const [showVolume, setShowVolume] = useState(false)
-    const [showVolumeProfile, setShowVolumeProfile] = useState(false)
-    const [showSMA50, setShowSMA50] = useState(false)
-    const [vpTooltip, setVpTooltip] = useState<{ x: number; y: number; price: string; volume: string } | null>(null)
-    const vpBinsRef = useRef<{ priceBottom: number; priceTop: number; volume: number; yTop: number; yBottom: number; barWidth: number }[]>([])
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+    const [isFullscreen, setIsFullscreen] = useState(false)
+    const [activeRange, setActiveRange] = useState<RangeKey>("1M")
+    const [chartData, setChartData] = useState<(CandlestickData | LineData)[]>([])
+    const [visibleAnnouncements, setVisibleAnnouncements] = useState<BSEAnnouncement[]>([])
+    const [currentChartType, setCurrentChartType] = useState<"candle" | "line" | "area">(type)
+    const [tickData, setTickData] = useState(false)
+      const [showVolume, setShowVolume] = useState(false)
+      const [showVolumeProfile, setShowVolumeProfile] = useState(false)
+      const [showSMA50, setShowSMA50] = useState(false)
+      const [vpTooltip, setVpTooltip] = useState<{ x: number; y: number; price: string; volume: string; isPoc?: boolean; relativeVolume?: number; liquidityType?: 'Magnet' | 'Vacuum' } | null>(null)
+      const vpBinsRef = useRef<{ priceBottom: number; priceTop: number; volume: number; yTop: number; yBottom: number; barWidth: number; isVah?: boolean; isVal?: boolean }[]>([])
 
-  const [showSMA200, setShowSMA200] = useState(false)
-  const [ohlcvData, setOhlcvData] = useState<OHLCVData[]>([])
-  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null)
-  const sma50SeriesRef = useRef<ISeriesApi<"Line"> | null>(null)
-  const sma200SeriesRef = useRef<ISeriesApi<"Line"> | null>(null)
-  const [selectedAnnouncement, setSelectedAnnouncement] = useState<BSEAnnouncement | null>(null)
-  const [popupPosition, setPopupPosition] = useState<{ x: number; y: number } | null>(null)
+      const [showSMA200, setShowSMA200] = useState(false)
+      const [ohlcvData, setOhlcvData] = useState<OHLCVData[]>([])
+      const [hoveredVpBin, setHoveredVpBin] = useState<{ priceBottom: number; priceTop: number; isPoc: boolean; yTop: number; yBottom: number } | null>(null)
+      const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null)
+    const sma50SeriesRef = useRef<ISeriesApi<"Line"> | null>(null)
+    const sma200SeriesRef = useRef<ISeriesApi<"Line"> | null>(null)
+    const [selectedAnnouncement, setSelectedAnnouncement] = useState<BSEAnnouncement | null>(null)
+    const [selectedWhaleDeal, setSelectedWhaleDeal] = useState<AggregatedWhaleDeal | null>(null)
+    const [hudView, setHudView] = useState<'whale' | 'announcement' | 'confluence'>('whale')
+    const [confluenceTab, setConfluenceTab] = useState<'whale' | 'announcement'>('whale')
+    const [popupPosition, setPopupPosition] = useState<{ x: number; y: number } | null>(null)
+
+    // Calculate Alpha (performance since signal)
+    const alphaSinceSignal = useMemo(() => {
+      const signal = selectedWhaleDeal || (selectedAnnouncement ? { date: selectedAnnouncement.time.split('T')[0], avgPrice: 0 } : null)
+      if (!signal || chartData.length === 0) return null
+
+      const signalDate = signal.date
+      const currentPrice = (chartData[chartData.length - 1] as any).value || (chartData[chartData.length - 1] as any).close
+      
+      const signalPriceData = chartData.find(d => d.time === signalDate)
+      if (!signalPriceData) return null
+      
+      const signalPrice = (signalPriceData as any).value || (signalPriceData as any).close
+      if (!signalPrice) return null
+
+      const change = ((currentPrice - signalPrice) / signalPrice) * 100
+      const days = Math.floor((new Date().getTime() - new Date(signalDate).getTime()) / (1000 * 60 * 60 * 24))
+      
+      return { change, days, signalPrice, currentPrice }
+    }, [selectedWhaleDeal, selectedAnnouncement, chartData])
+
+  // Aggregate whale deals by date and side
+  const aggregatedDeals = useMemo(() => {
+    if (!whaleDeals) return []
+    const groups = new Map<string, AggregatedWhaleDeal>()
+    
+    whaleDeals.forEach(w => {
+      const dateKey = w.date.split('T')[0]
+      const key = `${dateKey}_${w.side}`
+      const existing = groups.get(key)
+      const value = w.quantity * w.price
+      
+      if (existing) {
+        existing.totalValue += value
+        // Weighted average price
+        const totalQty = existing.deals.reduce((acc, d) => acc + d.quantity, 0) + w.quantity
+        existing.avgPrice = (existing.avgPrice * (totalQty - w.quantity) + w.price * w.quantity) / totalQty
+        existing.deals.push(w)
+      } else {
+        groups.set(key, {
+          date: dateKey,
+          side: w.side,
+          totalValue: value,
+          avgPrice: w.price,
+          deals: [w]
+        })
+      }
+    })
+    
+    return Array.from(groups.values())
+  }, [whaleDeals])
 
   // Determine marker properties based on category
   const formatVolume = (vol: number) => {
@@ -249,59 +315,79 @@ export function LightweightChart({
             const price = data?.value !== undefined ? data.value : data?.close
             const volume = volumeData?.value
             
-            if (price !== undefined && price !== null) {
-                tooltipRef.current.style.display = 'block'
-                
-                let dateDisplay = '—'
-                try {
-                    const dateObj = typeof param.time === 'string' ? new Date(param.time) : new Date((param.time as any))
-                    if (!isNaN(dateObj.getTime())) {
-                        dateDisplay = dateObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
-                    }
-                } catch (e) {
-                    console.error("Tooltip date error:", e)
-                }
+              if (price !== undefined && price !== null) {
+                  tooltipRef.current.style.display = 'block'
+                  
+                  let dateDisplay = '—'
+                  try {
+                      const dateObj = typeof param.time === 'string' ? new Date(param.time) : new Date((param.time as any))
+                      if (!isNaN(dateObj.getTime())) {
+                          dateDisplay = dateObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                      }
+                  } catch (e) {
+                      console.error("Tooltip date error:", e)
+                  }
 
-                tooltipRef.current.innerHTML = `
-                    <div class="flex flex-col gap-1">
-                        <div class="text-[10px] text-zinc-500 font-medium uppercase tracking-wider">${dateDisplay}</div>
-                        <div class="flex flex-col">
-                          <div class="text-xs font-bold text-white">₹${Number(price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
-                          ${volume !== undefined ? `<div class="text-[10px] text-zinc-400 font-medium mt-0.5">Vol: ${formatVolume(volume)}</div>` : ''}
-                        </div>
-                    </div>
-                `
-                
-                const coordinate = series.priceToCoordinate(price)
-                let shiftedX = param.point.x + 10
-                if (shiftedX > chartContainerRef.current.clientWidth - 120) {
-                    shiftedX = param.point.x - 120
-                }
-                
-                let shiftedY = coordinate ? coordinate - 60 : param.point.y - 60
-                if (shiftedY < 0) shiftedY = param.point.y + 20
-                
-                tooltipRef.current.style.left = shiftedX + 'px'
-                tooltipRef.current.style.top = shiftedY + 'px'
-            }
-        }
-    })
+                  tooltipRef.current.innerHTML = `
+                      <div class="flex flex-col gap-1">
+                          <div class="text-[10px] text-zinc-500 font-medium uppercase tracking-wider">${dateDisplay}</div>
+                          <div class="flex flex-col">
+                            <div class="text-xs font-bold text-white">₹${Number(price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                            ${volume !== undefined ? `<div class="text-[10px] text-zinc-400 font-medium mt-0.5">Vol: ${formatVolume(volume)}</div>` : ''}
+                          </div>
+                      </div>
+                  `
+                  
+                  let coordinate: number | null = null
+                  try {
+                      coordinate = series.priceToCoordinate(price)
+                  } catch (e) {}
+                  let shiftedX = param.point.x + 10
+                  if (shiftedX > chartContainerRef.current.clientWidth - 120) {
+                      shiftedX = param.point.x - 120
+                  }
+                  
+                  let shiftedY = coordinate ? coordinate - 60 : param.point.y - 60
+                  if (shiftedY < 0) shiftedY = param.point.y + 20
+                  
+                  tooltipRef.current.style.left = shiftedX + 'px'
+                  tooltipRef.current.style.top = shiftedY + 'px'
+              }
+          }
+      })
 
     // Marker click handling
     chart.subscribeClick(param => {
         if (!param.point || !param.time) {
             setSelectedAnnouncement(null)
+            setSelectedWhaleDeal(null)
             return
         }
 
         const clickedTime = param.time as string
+        
+        // Smart Multi-Selection for Confluence
+        const whaleDeal = aggregatedDeals.find(w => w.date === clickedTime)
         const announcement = announcements.find(a => a.time.split('T')[0] === clickedTime)
         
-        if (announcement) {
+        if (whaleDeal && announcement) {
+            setSelectedWhaleDeal(whaleDeal)
             setSelectedAnnouncement(announcement)
+            setHudView('confluence')
+            setPopupPosition({ x: param.point.x, y: param.point.y })
+        } else if (whaleDeal) {
+            setSelectedWhaleDeal(whaleDeal)
+            setSelectedAnnouncement(null)
+            setHudView('whale')
+            setPopupPosition({ x: param.point.x, y: param.point.y })
+        } else if (announcement) {
+            setSelectedAnnouncement(announcement)
+            setSelectedWhaleDeal(null)
+            setHudView('announcement')
             setPopupPosition({ x: param.point.x, y: param.point.y })
         } else {
             setSelectedAnnouncement(null)
+            setSelectedWhaleDeal(null)
         }
     })
 
@@ -402,23 +488,64 @@ export function LightweightChart({
             })
         }
 
-        // Add Markers for announcements
-        if (announcements.length > 0) {
-            const markers: SeriesMarker<Time>[] = announcements
-                .filter(a => a.time && formattedData.some(d => d.time === a.time.split('T')[0]))
-                .map(a => {
-                    const { text, color } = getMarkerProps(a.category)
-                    return {
-                        time: a.time.split('T')[0] as Time,
-                        position: 'inPrice' as SeriesMarkerPosition,
-                        color: color,
-                        shape: 'circle' as SeriesMarkerShape,
-                        text: text,
-                        size: 1.2,
-                    }
-                })
+          // Add Markers for announcements and whale deals
+          if (announcements.length > 0 || (whaleDeals && whaleDeals.length > 0)) {
+              const markers: SeriesMarker<Time>[] = []
+              const confluenceDates = new Set<string>()
+
+              // Identify confluence dates
+              const announcementDates = new Set(announcements.map(a => a.time.split('T')[0]))
+              aggregatedDeals.forEach(w => {
+                  if (announcementDates.has(w.date)) {
+                      confluenceDates.add(w.date)
+                  }
+              })
+              
+              // Announcement markers
+              if (announcements.length > 0) {
+                announcements
+                  .filter(a => a.time && formattedData.some(d => d.time === a.time.split('T')[0]))
+                  .forEach(a => {
+                      const date = a.time.split('T')[0]
+                      const isConfluence = confluenceDates.has(date)
+                      const { text, color } = getMarkerProps(a.category)
+                      
+                      markers.push({
+                          time: date as Time,
+                          position: 'inPrice' as SeriesMarkerPosition,
+                          color: isConfluence ? '#06b6d4' : color, // Cyan for confluence
+                          shape: 'circle' as SeriesMarkerShape,
+                          text: isConfluence ? `! ${text}` : text,
+                          size: isConfluence ? 1.5 : 1.2,
+                      })
+                  })
+              }
+
+              // Whale deal markers (Highly Advanced)
+              if (aggregatedDeals.length > 0) {
+                aggregatedDeals
+                  .filter(w => w.date && formattedData.some(d => d.time === w.date))
+                  .forEach(w => {
+                      const date = w.date
+                      const isConfluence = confluenceDates.has(date)
+                      const dealValue = w.totalValue / 10000000 // In Crores
+                      
+                      // Calculate size based on deal value (min 1.2, max 3.0)
+                      let size = Math.min(3.0, Math.max(1.2, 1.2 + Math.log10(Math.max(1, dealValue / 5))))
+                      if (isConfluence) size += 0.5 // Make confluence whales bigger
+                      
+                      markers.push({
+                          time: date as Time,
+                          position: w.side === 'BUY' ? 'belowBar' : 'aboveBar',
+                          color: isConfluence ? '#06b6d4' : (w.side === 'BUY' ? '#10b981' : '#ef4444'),
+                          shape: w.side === 'BUY' ? 'arrowUp' : 'arrowDown',
+                          text: isConfluence ? `🐳 CONFLUENCE` : (w.deals.length > 1 ? `W (${w.deals.length})` : 'W'),
+                          size: size as any,
+                      })
+                  })
+              }
             
-            // Add current target date marker if not in announcements
+            // Add current target date marker if not in markers
             if (targetDate) {
                 const tDate = targetDate.split('T')[0]
                 if (tDate && !markers.some(m => m.time === tDate)) {
@@ -534,17 +661,43 @@ export function LightweightChart({
         const numBins = 40
         const binSize = (maxPrice - minPrice) / numBins
         const bins = new Array(numBins).fill(0)
+        let totalVolume = 0
 
         visibleData.forEach(d => {
           const avgPrice = (d.high + d.low + d.close) / 3
           const binIndex = Math.min(numBins - 1, Math.floor((avgPrice - minPrice) / binSize))
           if (binIndex >= 0) {
             bins[binIndex] += d.volume || 0
+            totalVolume += d.volume || 0
           }
         })
 
         const maxVolume = Math.max(...bins)
         const pocIndex = bins.indexOf(maxVolume)
+        
+        // Calculate Value Area (70% of volume)
+        let vaVolume = bins[pocIndex]
+        let lowerIndex = pocIndex
+        let upperIndex = pocIndex
+        const vaTarget = totalVolume * 0.7
+
+        while (vaVolume < vaTarget && (lowerIndex > 0 || upperIndex < numBins - 1)) {
+          const prevVol = lowerIndex > 0 ? bins[lowerIndex - 1] : 0
+          const nextVol = upperIndex < numBins - 1 ? bins[upperIndex + 1] : 0
+          
+          if (prevVol >= nextVol && lowerIndex > 0) {
+            vaVolume += prevVol
+            lowerIndex--
+          } else if (upperIndex < numBins - 1) {
+            vaVolume += nextVol
+            upperIndex++
+          } else if (lowerIndex > 0) {
+            vaVolume += prevVol
+            lowerIndex--
+          } else {
+            break
+          }
+        }
         
         // Draw
         const width = canvas.width
@@ -555,107 +708,219 @@ export function LightweightChart({
         const storedBins: typeof vpBinsRef.current = []
         
         bins.forEach((vol, i) => {
-          if (vol === 0) return
+          if (vol === 0 && i !== pocIndex) return
           
           const priceBottom = minPrice + i * binSize
           const priceTop = priceBottom + binSize
           
-          const yTop = series.priceToCoordinate(priceTop)
-          const yBottom = series.priceToCoordinate(priceBottom)
+          let yTop: number | null = null
+          let yBottom: number | null = null
+          try {
+            yTop = series.priceToCoordinate(priceTop)
+            yBottom = series.priceToCoordinate(priceBottom)
+          } catch (e) {
+            return
+          }
           
           if (yTop === null || yBottom === null) return
-          
+        
           const barHeight = Math.abs(yBottom - yTop)
           const barWidth = (vol / maxVolume) * maxBarWidth
-          
-          storedBins.push({ priceBottom, priceTop, volume: vol, yTop, yBottom, barWidth })
-          
-          // Use theme colors with gradients
           const isPOC = i === pocIndex
-          if (isPOC) {
-            ctx.fillStyle = theme === 'dark' ? 'rgba(6, 182, 212, 0.35)' : 'rgba(6, 182, 212, 0.45)'
-          } else {
-            ctx.fillStyle = theme === 'dark' ? 'rgba(6, 182, 212, 0.15)' : 'rgba(6, 182, 212, 0.25)'
+          const isInVA = i >= lowerIndex && i <= upperIndex
+          
+          // Identify HVN/LVN
+          const isHVN = vol > maxVolume * 0.7 && !isPOC
+          const isLVN = vol < maxVolume * 0.1 && i > 0 && i < numBins - 1 && bins[i-1] > vol && bins[i+1] > vol
+
+          storedBins.push({ 
+            priceBottom, 
+            priceTop, 
+            volume: vol, 
+            yTop, 
+            yBottom, 
+            barWidth,
+            isVah: i === upperIndex,
+            isVal: i === lowerIndex
+          })
+          
+          // Highlight hovered bin with a full-width projection band
+          const isHovered = hoveredVpBin && 
+            hoveredVpBin.priceBottom === priceBottom && 
+            hoveredVpBin.priceTop === priceTop
+
+          if (isHovered) {
+            // Draw Price Projection Band (Full width)
+            const gradient = ctx.createLinearGradient(0, yTop, 0, yBottom)
+            gradient.addColorStop(0, 'rgba(6, 182, 212, 0.05)')
+            gradient.addColorStop(0.5, 'rgba(6, 182, 212, 0.12)')
+            gradient.addColorStop(1, 'rgba(6, 182, 212, 0.05)')
+            ctx.fillStyle = gradient
+            ctx.fillRect(0, yTop, width, barHeight)
+            
+            // Draw side indicators for the band
+            ctx.fillStyle = 'rgba(6, 182, 212, 0.4)'
+            ctx.fillRect(0, yTop, 4, barHeight) // Left edge
+            
+            // Neon glow line across the chart
+            ctx.shadowBlur = 10
+            ctx.shadowColor = 'rgba(6, 182, 212, 0.5)'
+            ctx.strokeStyle = 'rgba(6, 182, 212, 0.2)'
+            ctx.lineWidth = 1
+            ctx.beginPath()
+            ctx.moveTo(0, yTop + barHeight / 2)
+            ctx.lineTo(width, yTop + barHeight / 2)
+            ctx.stroke()
+            ctx.shadowBlur = 0
           }
+
+          // Bar Colors
+          if (isPOC) {
+            ctx.fillStyle = theme === 'dark' ? 'rgba(6, 182, 212, 0.4)' : 'rgba(6, 182, 212, 0.5)'
+          } else if (isInVA) {
+            ctx.fillStyle = theme === 'dark' ? 'rgba(6, 182, 212, 0.2)' : 'rgba(6, 182, 212, 0.3)'
+          } else {
+            ctx.fillStyle = theme === 'dark' ? 'rgba(6, 182, 212, 0.08)' : 'rgba(6, 182, 212, 0.15)'
+          }
+
+          if (isHovered) {
+             ctx.fillStyle = 'rgba(6, 182, 212, 0.65)'
+          }
+
           ctx.fillRect(width - barWidth, yTop, barWidth, barHeight - 1)
           
-          // Add border to POC
+          // Add border and label to POC
           if (isPOC) {
-            ctx.strokeStyle = 'rgba(6, 182, 212, 0.7)'
-            ctx.lineWidth = 1.5
+            ctx.strokeStyle = isHovered ? 'rgba(6, 182, 212, 1)' : 'rgba(6, 182, 212, 0.8)'
+            ctx.lineWidth = isHovered ? 2.5 : 1.5
             ctx.strokeRect(width - barWidth, yTop, barWidth, barHeight - 1)
             
-            // Add POC label
-            ctx.fillStyle = '#06b6d4'
-            ctx.font = 'bold 9px sans-serif'
-            ctx.fillText('POC', width - barWidth - 28, yTop + barHeight / 2 + 3)
+            // Add POC label with neon background
+            const labelWidth = 32
+            const labelHeight = 14
+            ctx.fillStyle = isHovered ? '#06b6d4' : 'rgba(6, 182, 212, 0.9)'
+            ctx.roundRect?.(width - barWidth - labelWidth - 5, yTop + (barHeight - labelHeight) / 2, labelWidth, labelHeight, 4)
+            ctx.fill()
+            
+            ctx.fillStyle = '#000'
+            ctx.font = 'black 9px sans-serif'
+            ctx.textAlign = 'center'
+            ctx.fillText('POC', width - barWidth - labelWidth / 2 - 5, yTop + barHeight / 2 + 3.5)
+            ctx.textAlign = 'start'
+          }
+
+          // Label VAH/VAL
+          if (i === upperIndex || i === lowerIndex) {
+            ctx.fillStyle = 'rgba(161, 161, 170, 0.4)'
+            ctx.font = 'bold 8px sans-serif'
+            ctx.fillText(i === upperIndex ? 'VAH' : 'VAL', width - 25, i === upperIndex ? yTop - 2 : yBottom + 8)
+          }
+
+          // LVN Indication (Liquidity Vacuum)
+          if (isLVN && !isHovered) {
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)'
+            ctx.setLineDash([2, 2])
+            ctx.strokeRect(width - 40, yTop, 40, barHeight)
+            ctx.setLineDash([])
           }
         })
         
         vpBinsRef.current = storedBins
       }
 
-      // Initial update
-      updateVolumeProfile()
 
-      // Subscribe to changes
-      chart.timeScale().subscribeVisibleTimeRangeChange(updateVolumeProfile)
-      
-      return () => {
-        chart.timeScale().unsubscribeVisibleTimeRangeChange(updateVolumeProfile)
-        ctx.clearRect(0, 0, canvas.width, canvas.height)
-        vpBinsRef.current = []
+        // Initial update
+        updateVolumeProfile()
+
+        // Subscribe to changes
+        chart.timeScale().subscribeVisibleTimeRangeChange(updateVolumeProfile)
+        
+        return () => {
+          chart.timeScale().unsubscribeVisibleTimeRangeChange(updateVolumeProfile)
+          ctx.clearRect(0, 0, canvas.width, canvas.height)
+          vpBinsRef.current = []
+        }
+      }, [showVolumeProfile, ohlcvData, theme, hoveredVpBin])
+
+      // Volume Profile hover handler
+      const handleVpCanvasMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+        if (!showVolumeProfile || !vpCanvasRef.current || vpBinsRef.current.length === 0) {
+          setVpTooltip(null)
+          setHoveredVpBin(null)
+          return
+        }
+        
+        const rect = vpCanvasRef.current.getBoundingClientRect()
+        const x = e.clientX - rect.left
+        const y = e.clientY - rect.top
+        const canvasWidth = vpCanvasRef.current.width
+        
+        // Find if we are hovering any bin (by Y coordinate only for projection)
+        const hitBinIndex = vpBinsRef.current.findIndex(bin => y >= bin.yTop && y <= bin.yBottom)
+        const hitBin = hitBinIndex !== -1 ? vpBinsRef.current[hitBinIndex] : null
+        
+        if (hitBin) {
+          // Check if cursor is specifically on the bar (for tooltip)
+          const barX = canvasWidth - hitBin.barWidth
+          const isOverBar = x >= barX && x <= canvasWidth
+          
+          const maxVolume = Math.max(...vpBinsRef.current.map(b => b.volume))
+          const isPoc = hitBin.volume === maxVolume
+
+          setHoveredVpBin({
+            priceBottom: hitBin.priceBottom,
+            priceTop: hitBin.priceTop,
+            isPoc,
+            yTop: hitBin.yTop,
+            yBottom: hitBin.yBottom
+          })
+
+          if (isOverBar) {
+            const priceRange = `₹${hitBin.priceBottom.toFixed(2)} - ₹${hitBin.priceTop.toFixed(2)}`
+            const volStr = formatVolume(hitBin.volume)
+            setVpTooltip({ 
+              x: e.clientX - rect.left - 160, 
+              y: e.clientY - rect.top - 70, 
+              price: priceRange, 
+              volume: volStr,
+              isPoc,
+              relativeVolume: (hitBin.volume / maxVolume) * 100
+            })
+          } else {
+            setVpTooltip(null)
+          }
+        } else {
+          setVpTooltip(null)
+          setHoveredVpBin(null)
+        }
       }
-    }, [showVolumeProfile, ohlcvData, theme])
 
-    // Volume Profile hover handler
-    const handleVpCanvasMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (!showVolumeProfile || !vpCanvasRef.current || vpBinsRef.current.length === 0) {
+      const handleVpCanvasLeave = () => {
         setVpTooltip(null)
-        return
+        setHoveredVpBin(null)
       }
-      
-      const rect = vpCanvasRef.current.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const y = e.clientY - rect.top
-      const canvasWidth = vpCanvasRef.current.width
-      
-      // Check if cursor is in the right-side volume profile area
-      const hitBin = vpBinsRef.current.find(bin => {
-        const barX = canvasWidth - bin.barWidth
-        return x >= barX && x <= canvasWidth && y >= bin.yTop && y <= bin.yBottom
-      })
-      
-      if (hitBin) {
-        const priceRange = `₹${hitBin.priceBottom.toFixed(2)} - ₹${hitBin.priceTop.toFixed(2)}`
-        const volStr = formatVolume(hitBin.volume)
-        setVpTooltip({ x: e.clientX - rect.left - 140, y: e.clientY - rect.top - 50, price: priceRange, volume: volStr })
-      } else {
-        setVpTooltip(null)
-      }
-    }
-
-    const handleVpCanvasLeave = () => {
-      setVpTooltip(null)
-    }
 
     // Update visible range when activeRange changes
   useEffect(() => {
-    if (!chartRef.current || chartData.length === 0) return
+    if (!chartRef.current || chartData.length === 0 || loading) return
 
     const days = RANGE_MAP[activeRange]
     const visibleData = chartData.slice(-Math.min(chartData.length, days))
-    if (visibleData.length > 0) {
+    if (visibleData.length > 1) {
+      try {
         chartRef.current.timeScale().setVisibleRange({
             from: visibleData[0].time as Time,
             to: visibleData[visibleData.length - 1].time as Time,
         })
+      } catch (e) {
+        // Ignore - chart may not be fully initialized
+      }
     }
-  }, [activeRange, chartData])
+  }, [activeRange, chartData, loading])
 
   // Update focus when targetDate changes
   useEffect(() => {
-    if (!chartRef.current || !targetDate || chartData.length === 0) return
+    if (!chartRef.current || !targetDate || chartData.length === 0 || loading) return
 
     const tDate = targetDate.split('T')[0]
     const targetIndex = chartData.findIndex(d => d.time === tDate)
@@ -664,16 +929,20 @@ export function LightweightChart({
       const fromIndex = Math.max(0, targetIndex - 15)
       const toIndex = Math.min(chartData.length - 1, targetIndex + 15)
       
-      chartRef.current.timeScale().setVisibleRange({
-          from: chartData[fromIndex].time as Time,
-          to: chartData[toIndex].time as Time,
-      })
+      try {
+        chartRef.current.timeScale().setVisibleRange({
+            from: chartData[fromIndex].time as Time,
+            to: chartData[toIndex].time as Time,
+        })
+      } catch (e) {
+        // Ignore - chart may not be fully initialized
+      }
     }
-  }, [targetDate, chartData])
+  }, [targetDate, chartData, loading])
 
   // Auto-popup when highlightedAnnouncementId changes
   useEffect(() => {
-    if (!chartRef.current || !seriesRef.current || !highlightedAnnouncementId || announcements.length === 0 || chartData.length === 0) {
+    if (!chartRef.current || !seriesRef.current || !highlightedAnnouncementId || announcements.length === 0 || chartData.length === 0 || loading) {
       return
     }
 
@@ -683,34 +952,44 @@ export function LightweightChart({
     const tDate = announcement.time.split('T')[0] as Time
     const dataPoint = chartData.find(d => d.time === tDate)
     
-    if (dataPoint) {
-      // Need a small timeout to ensure chart has finished rendering/scaling
-      const timer = setTimeout(() => {
-        if (!chartRef.current || !seriesRef.current) return
-        
-        const x = chartRef.current.timeScale().timeToCoordinate(tDate)
-        const price = (dataPoint as any).value || (dataPoint as any).close
-        const y = seriesRef.current.priceToCoordinate(price)
+      if (dataPoint) {
+        // Need a small timeout to ensure chart has finished rendering/scaling
+        const timer = setTimeout(() => {
+          if (!chartRef.current || !seriesRef.current) return
+          
+          let x: number | null = null
+          let y: number | null = null
+          try {
+            x = chartRef.current.timeScale().timeToCoordinate(tDate)
+            const price = (dataPoint as any).value || (dataPoint as any).close
+            y = seriesRef.current.priceToCoordinate(price)
+          } catch (e) {
+            return
+          }
 
-        if (x !== null && y !== null) {
-          setSelectedAnnouncement(announcement)
-          setPopupPosition({ x, y })
+          if (x !== null && y !== null) {
+            setSelectedAnnouncement(announcement)
+            setPopupPosition({ x, y })
           
           // Also focus the chart on this point
           const targetIndex = chartData.findIndex(d => d.time === tDate)
           if (targetIndex !== -1) {
             const fromIndex = Math.max(0, targetIndex - 15)
             const toIndex = Math.min(chartData.length - 1, targetIndex + 15)
-            chartRef.current.timeScale().setVisibleRange({
-                from: chartData[fromIndex].time as Time,
-                to: chartData[toIndex].time as Time,
-            })
+            try {
+              chartRef.current.timeScale().setVisibleRange({
+                  from: chartData[fromIndex].time as Time,
+                  to: chartData[toIndex].time as Time,
+              })
+            } catch (e) {
+              // Ignore - chart may not be fully initialized
+            }
           }
         }
       }, 100)
       return () => clearTimeout(timer)
     }
-  }, [highlightedAnnouncementId, announcements, chartData])
+  }, [highlightedAnnouncementId, announcements, chartData, loading])
 
   return (
     <div className={`relative w-full rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 flex flex-col ${isFullscreen ? 'fixed inset-0 z-[100] h-screen' : ''}`}>
@@ -853,87 +1132,280 @@ export function LightweightChart({
           <div ref={chartContainerRef} className="w-full" style={{ height: isFullscreen ? 'calc(100vh - 60px)' : `${height}px` }} />
           <canvas 
             ref={vpCanvasRef} 
-            className={`absolute inset-0 z-10 ${showVolumeProfile ? 'pointer-events-auto' : 'pointer-events-none'}`}
+            className={`absolute inset-0 z-10 pointer-events-none`}
             width={chartContainerRef.current?.clientWidth || 800}
             height={isFullscreen ? (typeof window !== 'undefined' ? window.innerHeight - 60 : 800) : height}
-            onMouseMove={handleVpCanvasMove}
-            onMouseLeave={handleVpCanvasLeave}
           />
           
-          {/* Volume Profile Tooltip */}
-          {vpTooltip && (
-            <div 
-              className="absolute z-50 p-2.5 bg-zinc-900/95 backdrop-blur-md border border-cyan-500/30 rounded-lg shadow-2xl animate-in fade-in duration-100"
-              style={{ left: vpTooltip.x, top: vpTooltip.y }}
-            >
-              <div className="flex flex-col gap-1">
-                <div className="text-[9px] text-cyan-400 font-bold uppercase tracking-wider">Volume Profile</div>
-                <div className="text-[10px] text-zinc-400">{vpTooltip.price}</div>
-                <div className="text-xs font-bold text-white">Vol: {vpTooltip.volume}</div>
-              </div>
-            </div>
-          )}
-          
-          <div ref={tooltipRef} className="absolute z-50 pointer-events-none hidden p-2 bg-zinc-900/95 backdrop-blur-md border border-zinc-800 rounded-lg shadow-2xl min-w-[120px]" />
-          
-          {/* Announcement Popup */}
-          {selectedAnnouncement && popupPosition && (
-            <div 
-              className="absolute z-[60] bg-zinc-900/95 backdrop-blur-md border border-zinc-800 rounded-xl shadow-2xl p-4 w-[280px] animate-in zoom-in-95 duration-200"
-              style={{ 
-                left: Math.min(popupPosition.x + 10, (chartContainerRef.current?.clientWidth || 0) - 290),
-                top: Math.max(10, Math.min(popupPosition.y - 120, (chartContainerRef.current?.clientHeight || 0) - 180))
-              }}
-            >
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className={cn(
-                    "w-2 h-2 rounded-full",
-                    getMarkerProps(selectedAnnouncement.category).color === '#f59e0b' ? "bg-amber-500" :
-                    getMarkerProps(selectedAnnouncement.category).color === '#f97316' ? "bg-orange-500" : "bg-purple-500"
-                  )} />
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">{selectedAnnouncement.category}</span>
-                </div>
-                <button onClick={() => setSelectedAnnouncement(null)} className="text-zinc-500 hover:text-white transition-colors">
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-              
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold text-white leading-snug line-clamp-2">{selectedAnnouncement.headline}</h4>
-                <div className="flex items-center gap-3 text-[10px] text-zinc-500 font-medium">
-                  <div className="flex items-center gap-1">
-                    <Calendar className="h-3 w-3" />
-                    {new Date(selectedAnnouncement.time).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+            {/* Enhanced Volume Profile Tooltip */}
+            {vpTooltip && (
+              <div 
+                className="absolute z-50 p-3 bg-zinc-950/90 backdrop-blur-xl border border-cyan-500/40 rounded-xl shadow-[0_0_30px_rgba(6,182,212,0.2)] animate-in slide-in-from-bottom-2 duration-200"
+                style={{ left: vpTooltip.x, top: vpTooltip.y }}
+              >
+                <div className="flex flex-col gap-1.5 min-w-[140px]">
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-[9px] font-black text-cyan-400 uppercase tracking-widest">Price Cluster</span>
+                    {(vpTooltip as any).isPoc && (
+                      <span className="px-1.5 py-0.5 rounded-md bg-cyan-500 text-[8px] font-black text-black">POC</span>
+                    )}
                   </div>
-                  <div className="flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
-                    {new Date(selectedAnnouncement.time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                  <div className="text-sm font-black text-white tabular-nums">{vpTooltip.price}</div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="h-1.5 flex-1 bg-zinc-800 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.6)]" 
+                          style={{ width: `${(vpTooltip as any).relativeVolume || 0}%` }} 
+                        />
+                    </div>
+                    <span className="text-[10px] font-bold text-zinc-400 whitespace-nowrap">Vol: {vpTooltip.volume}</span>
                   </div>
                 </div>
-                
-                <p className="text-[10px] text-zinc-400 line-clamp-2 leading-relaxed bg-zinc-950/50 p-2 rounded-lg border border-white/5 italic">
-                  {selectedAnnouncement.summary || selectedAnnouncement.headline}
-                </p>
-                
-                <div className="pt-2 flex items-center justify-between">
-                  <SentimentBadge text={`${selectedAnnouncement.headline} ${selectedAnnouncement.summary || ''}`} compact />
-                  <a 
-                    href={selectedAnnouncement.pdfUrl ?? '#'} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 text-[10px] font-bold text-cyan-400 hover:text-cyan-300 transition-colors"
+              </div>
+            )}
+          
+            <div ref={tooltipRef} className="absolute z-50 pointer-events-none hidden p-2 bg-zinc-900/95 backdrop-blur-md border border-zinc-800 rounded-lg shadow-2xl min-w-[120px]" />
+            
+                {/* Unified Intelligence HUD */}
+                {(selectedAnnouncement || selectedWhaleDeal) && popupPosition && (
+                  <div 
+                    className={cn(
+                      "absolute z-[60] bg-zinc-950/95 backdrop-blur-2xl border rounded-xl shadow-[0_15px_40px_rgba(0,0,0,0.5)] p-3.5 w-[280px] animate-in zoom-in-95 fade-in duration-300 overflow-hidden",
+                      hudView === 'confluence' ? "border-cyan-500/50 shadow-[0_0_20px_rgba(6,182,212,0.15)]" : "border-white/10"
+                    )}
+                    style={{ 
+                      left: Math.min(popupPosition.x + 10, (chartContainerRef.current?.clientWidth || 0) - 290),
+                      top: Math.max(10, Math.min(popupPosition.y - 140, (chartContainerRef.current?.clientHeight || 0) - 220))
+                    }}
                   >
-                    <span>Read PDF</span>
-                    <ExternalLink className="h-2.5 w-2.5" />
-                  </a>
-                </div>
-              </div>
-            </div>
-          )}
+                    {/* Intelligence Background Glows */}
+                    {hudView === 'confluence' && (
+                      <>
+                        <div className="absolute -top-16 -left-16 w-48 h-48 blur-[60px] opacity-15 rounded-full bg-cyan-500 animate-pulse" />
+                        <div className="absolute inset-0 bg-[linear-gradient(45deg,transparent_25%,rgba(6,182,212,0.02)_50%,transparent_75%)] bg-[length:250%_250%] animate-[shimmer_3s_infinite_linear]" />
+                      </>
+                    )}
+                    {hudView === 'whale' && selectedWhaleDeal && (
+                      <div className={cn(
+                        "absolute -top-16 -right-16 w-32 h-32 blur-[50px] opacity-15 rounded-full",
+                        selectedWhaleDeal.side === 'BUY' ? "bg-emerald-500" : "bg-rose-500"
+                      )} />
+                    )}
+  
+                    <div className="relative z-10">
+                      <div className="flex items-start justify-between mb-2.5">
+                        <div className="flex items-center gap-2">
+                          {hudView === 'confluence' ? (
+                            <div className="relative">
+                              <div className="absolute inset-0 bg-cyan-500 blur-sm opacity-30 animate-pulse" />
+                              <div className="relative w-8 h-8 rounded-lg flex items-center justify-center border bg-cyan-500/10 border-cyan-500/30 text-cyan-400 shadow-[0_0_10px_rgba(6,182,212,0.15)]">
+                                <TrendingUp className="h-4 w-4" />
+                              </div>
+                            </div>
+                          ) : hudView === 'whale' && selectedWhaleDeal ? (
+                            <div className={cn(
+                              "w-8 h-8 rounded-lg flex items-center justify-center border",
+                              selectedWhaleDeal.side === 'BUY' 
+                                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" 
+                                : "bg-rose-500/10 border-rose-500/30 text-rose-400"
+                            )}>
+                              <Waves className="h-4 w-4" />
+                            </div>
+                          ) : (
+                            <div className={cn(
+                              "w-8 h-8 rounded-lg flex items-center justify-center border bg-zinc-800/50 border-white/10",
+                              selectedAnnouncement && getMarkerProps(selectedAnnouncement.category).color === '#f59e0b' && "text-amber-400 border-amber-500/30",
+                              selectedAnnouncement && getMarkerProps(selectedAnnouncement.category).color === '#f97316' && "text-orange-400 border-orange-500/30",
+                              selectedAnnouncement && getMarkerProps(selectedAnnouncement.category).color === '#8b5cf6' && "text-purple-400 border-purple-500/30",
+                              selectedAnnouncement && getMarkerProps(selectedAnnouncement.category).color === '#ec4899' && "text-pink-400 border-pink-500/30",
+                              selectedAnnouncement && getMarkerProps(selectedAnnouncement.category).color === '#06b6d4' && "text-cyan-400 border-cyan-500/30",
+                            )}>
+                              <Calendar className="h-4 w-4" />
+                            </div>
+                          )}
+                          
+                          <div>
+                            <div className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.15em] leading-none mb-0.5">
+                              {hudView === 'confluence' ? 'Confluence' : hudView === 'whale' ? 'Whale Flow' : 'Event'}
+                            </div>
+                              <div className={cn(
+                                "text-[10px] font-bold transition-colors duration-500 leading-tight",
+                                hudView === 'confluence' ? "text-cyan-400" : (hudView === 'whale' && selectedWhaleDeal?.side === 'BUY') ? "text-emerald-400" : (hudView === 'whale' && selectedWhaleDeal?.side === 'SELL') ? "text-rose-400" : "text-white"
+                              )}>
+                                {hudView === 'confluence' ? 'DOUBLE SIGNAL' : hudView === 'whale' ? (selectedWhaleDeal?.side === 'BUY' ? 'ACCUMULATION' : 'DISTRIBUTION') : (selectedAnnouncement?.category.split(' ')[0] + '...')}
+                              </div>
+                            </div>
+                          </div>
+  
+                          <div className="flex flex-col items-end mr-1">
+                             <div className="text-[8px] font-black text-zinc-500 uppercase tracking-widest mb-0.5">Alpha</div>
+                             <div className="flex items-center gap-1.5">
+                               {alphaSinceSignal && (
+                                 <div className={cn(
+                                   "text-[9px] font-black",
+                                   alphaSinceSignal.change >= 0 ? "text-emerald-400" : "text-rose-400"
+                                 )}>
+                                   {alphaSinceSignal.change >= 0 ? '+' : ''}{alphaSinceSignal.change.toFixed(1)}%
+                                 </div>
+                               )}
+                               <div className="flex gap-0.5 h-2 items-center">
+                                 {[1, 2, 3, 4, 5].map((s) => {
+                                   const score = hudView === 'confluence' ? 5 : (hudView === 'whale' ? 4 : 3)
+                                   return (
+                                     <div 
+                                       key={s} 
+                                       className={cn(
+                                         "w-0.5 h-1.5 rounded-full transition-all duration-700", 
+                                         s <= score 
+                                           ? (hudView === 'confluence' ? "bg-cyan-500 shadow-[0_0_5px_rgba(6,182,212,0.6)]" : "bg-zinc-400") 
+                                           : "bg-zinc-800"
+                                       )} 
+                                     />
+                                   )
+                                 })}
+                               </div>
+                             </div>
+                          </div>
+                          
+                          <button 
+                            onClick={() => {
+                              setSelectedAnnouncement(null)
+                              setSelectedWhaleDeal(null)
+                            }} 
+                            className="p-1 rounded-md hover:bg-white/10 text-zinc-500 hover:text-white transition-all active:scale-90"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+  
+                        {/* Scanning Overlay */}
+                        <div className="absolute inset-0 pointer-events-none">
+                            {hudView === 'confluence' && (
+                                <div className="absolute top-0 left-0 w-full h-[1px] bg-cyan-500/20 shadow-[0_0_10px_rgba(6,182,212,0.5)] animate-[scan_4s_infinite_ease-in-out]" />
+                            )}
+                        </div>
+    
+                        {/* Confluence Tab Switcher (Minimal) */}
+                        {hudView === 'confluence' && (
+                          <div className="flex p-0.5 bg-white/[0.03] border border-white/5 rounded-lg mb-2.5 relative overflow-hidden">
+                            <button 
+                              onClick={() => setConfluenceTab('whale')}
+                              className={cn(
+                                "flex-1 flex items-center justify-center gap-1.5 py-1 text-[8px] font-black rounded-md transition-all relative z-10",
+                                confluenceTab === 'whale' ? "text-white" : "text-zinc-600 hover:text-zinc-400"
+                              )}
+                            >
+                              <Waves className={cn("h-3 w-3", confluenceTab === 'whale' ? "text-cyan-400" : "")} /> FLOW
+                            </button>
+                            <button 
+                              onClick={() => setConfluenceTab('announcement')}
+                              className={cn(
+                                "flex-1 flex items-center justify-center gap-1.5 py-1 text-[8px] font-black rounded-md transition-all relative z-10",
+                                confluenceTab === 'announcement' ? "text-white" : "text-zinc-600 hover:text-zinc-400"
+                              )}
+                            >
+                              <Calendar className={cn("h-3 w-3", confluenceTab === 'announcement' ? "text-cyan-400" : "")} /> NEWS
+                            </button>
+                            <div 
+                              className={cn(
+                                "absolute top-0.5 bottom-0.5 w-[calc(50%-2px)] bg-zinc-800 rounded-md transition-all duration-500 cubic-bezier(0.4, 0, 0.2, 1) shadow-lg border border-white/5",
+                                confluenceTab === 'whale' ? "left-0.5" : "left-[calc(50%+1px)]"
+                              )}
+                            />
+                          </div>
+                        )}
+    
+                        {/* Content Area */}
+                        <div className="min-h-[100px]">
+                          {(hudView === 'whale' || (hudView === 'confluence' && confluenceTab === 'whale')) && selectedWhaleDeal && (
+                            <div className="space-y-2.5 animate-in slide-in-from-right-2 duration-300">
+                              <div>
+                                <div className="max-h-[80px] overflow-y-auto scrollbar-none space-y-1.5 pr-1">
+                                  {selectedWhaleDeal.deals.slice(0, 3).map((deal, i) => (
+                                    <div key={i} className="group/item border-b border-white/[0.03] last:border-0 pb-1.5 last:pb-0">
+                                        <h4 className="text-[11px] font-black text-zinc-100 leading-tight line-clamp-1">
+                                            {deal.clientName}
+                                        </h4>
+                                        <div className="text-[8px] font-bold text-zinc-500 uppercase mt-0.5 flex items-center gap-1.5">
+                                            <span className="text-zinc-300">₹{(deal.quantity * deal.price / 10000000).toFixed(2)}Cr</span>
+                                            <span className="w-0.5 h-0.5 rounded-full bg-zinc-700" />
+                                            <span>{deal.price.toFixed(1)}</span>
+                                        </div>
+                                    </div>
+                                  ))}
+                                  {selectedWhaleDeal.deals.length > 3 && (
+                                    <div className="text-[8px] font-black text-cyan-500/60 uppercase tracking-widest pt-1">
+                                      + {selectedWhaleDeal.deals.length - 3} MORE INSTITUTIONS
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+    
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="bg-white/[0.03] border border-white/5 rounded-lg p-2 group/stat">
+                                  <div className="text-[7px] font-black text-zinc-600 uppercase mb-0.5">Value</div>
+                                  <div className="text-[10px] font-black text-white tabular-nums">
+                                    ₹{(selectedWhaleDeal.totalValue / 10000000).toFixed(1)}Cr
+                                  </div>
+                                </div>
+                                <div className="bg-white/[0.03] border border-white/5 rounded-lg p-2 group/stat">
+                                  <div className="text-[7px] font-black text-zinc-600 uppercase mb-0.5">Avg Price</div>
+                                  <div className="text-[10px] font-black text-white tabular-nums">
+                                    ₹{selectedWhaleDeal.avgPrice.toFixed(1)}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+    
+                          {(hudView === 'announcement' || (hudView === 'confluence' && confluenceTab === 'announcement')) && selectedAnnouncement && (
+                            <div className="space-y-2.5 animate-in slide-in-from-left-2 duration-300">
+                              {/* AI Narrative Section */}
+                              <div className="bg-cyan-500/[0.03] border border-cyan-500/20 rounded-lg p-2.5 relative overflow-hidden">
+                                  <div className="text-[8px] font-black text-cyan-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                                      <TrendingUp className="h-3 w-3" /> AI INSIGHT
+                                  </div>
+                                  <h4 className="text-[10px] font-bold text-zinc-200 leading-normal italic line-clamp-3">
+                                    {selectedAnnouncement.summary || selectedAnnouncement.headline}
+                                  </h4>
+                              </div>
+  
+                              <div className="bg-white/[0.02] border border-white/5 rounded-lg p-2 group/news">
+                                <h4 className="text-[9px] font-bold text-zinc-500 group-hover:text-zinc-300 transition-colors line-clamp-2 leading-tight">
+                                  {selectedAnnouncement.headline}
+                                </h4>
+                              </div>
+                              
+                              {selectedAnnouncement.pdfUrl && (
+                                <a 
+                                  href={selectedAnnouncement.pdfUrl} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="group flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-[8px] font-black text-cyan-400 hover:bg-cyan-500/20 transition-all"
+                                >
+                                  VIEW FILING <ExternalLink className="h-2.5 w-2.5" />
+                                </a>
+                              )}
+                            </div>
+                          )}
+                        </div>
+  
+                      {/* Footer Info (Minimal) */}
+                      <div className="flex items-center justify-between pt-2 mt-2 border-t border-white/5">
+                        <div className="flex items-center gap-1.5 text-[8px] text-zinc-600 font-bold uppercase tracking-wider">
+                          <Clock className="h-2.5 w-2.5" />
+                          {new Date((selectedWhaleDeal?.date || selectedAnnouncement?.time || '')).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[8px] font-black text-cyan-500/60 tracking-widest uppercase">VALIDATED</span>
+                          <CheckCircle2 className="h-2.5 w-2.5 text-cyan-500/60" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
-        
-        {loading && (
+          {loading && (
             <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm z-40">
                 <div className="flex flex-col items-center gap-2">
                     <RefreshCw className="h-6 w-6 text-cyan-500 animate-spin" />

@@ -7,6 +7,7 @@ import { BulkDealsAIBar } from "@/components/bulk-deals-ai-bar"
 import { InvestorLeaderboard } from "@/components/bulk-deals/InvestorLeaderboard"
 import { DealPerformanceTable } from "@/components/bulk-deals/DealPerformanceTable"
 import { PerformanceSummary } from "@/components/bulk-deals/PerformanceSummary"
+import { SectorWhaleFlow } from "@/components/bulk-deals/SectorWhaleFlow"
 import { classifyInvestor } from "@/lib/bulk-deals/investorClassifier"
 
 type Deal = {
@@ -592,13 +593,17 @@ export default function BulkDealsPage() {
             </div>
 
             {/* Smart Money Tracker - Investor Leaderboard with Type Tabs */}
-          {stats.topInvestors && stats.topInvestors.length > 0 && (
-            <InvestorLeaderboard 
-              investors={stats.topInvestors} 
-              loading={loading}
-            />
-          )}
-        </div>
+            {stats.topInvestors && stats.topInvestors.length > 0 && (
+              <InvestorLeaderboard 
+                investors={stats.topInvestors} 
+                loading={loading}
+              />
+            )}
+
+            <div className="mt-8">
+              <SectorWhaleFlow />
+            </div>
+          </div>
 
         {/* Filters */}
         <div className="bg-zinc-900/50 border border-white/10 rounded-2xl p-6 mb-6">

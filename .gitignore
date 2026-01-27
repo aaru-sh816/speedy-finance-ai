@@ -40,5 +40,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+__pycache__/
+*.pyc
+python-services/personaplex/
+
 .vercel
 .env*.local

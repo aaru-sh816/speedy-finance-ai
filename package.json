@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-slot": "^1.2.4",
     "@radix-ui/react-tabs": "^1.1.13",
@@ -21,8 +22,8 @@
     "cohere-ai": "^7.20.0",
     "date-fns": "^4.1.0",
     "framer-motion": "^12.23.26",
-      "lightweight-charts": "^4.2.1",
-      "lucide-react": "^0.555.0",
+    "lightweight-charts": "^4.2.1",
+    "lucide-react": "^0.555.0",
     "motion-dom": "^12.23.23",
     "motion-utils": "^12.23.6",
     "next": "^16.0.7",

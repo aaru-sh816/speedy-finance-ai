@@ -2,6 +2,7 @@
 
 // AI Summary Panel
 import { useState, useEffect, useRef } from "react"
+import { clsx } from "clsx"
 import { 
   type VerdictType, 
   type AISummary, 
@@ -16,7 +17,7 @@ import { getMarketStatus } from "@/lib/bse/market-hours"
 import { 
   RefreshCw, FileText, Sparkles, CheckCircle, XCircle, Loader2, Maximize2, 
   TrendingUp, TrendingDown, Zap, HelpCircle, ChevronUp, ChevronDown,
-  BarChart2
+  BarChart2, Share2
 } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { MarketDepth } from "./market-depth"
@@ -108,6 +109,7 @@ export function AISummaryPanel({
   const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>("idle")
   const [source, setSource] = useState<string>("")
   const [isReanalyzing, setIsReanalyzing] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle')
   const [realDepth, setRealDepth] = useState<any>(null)
   const [isMarketOpen, setIsMarketOpen] = useState(true)
   const [depthFetchFailed, setDepthFetchFailed] = useState(false)
@@ -191,43 +193,44 @@ export function AISummaryPanel({
       
       let table = '<div class="overflow-x-auto my-3"><table class="w-full text-xs border-collapse">'
       table += '<thead><tr class="border-b border-white/10">'
-      headers.forEach((h: string) => {
-        table += `<th class="px-3 py-2 text-left text-zinc-400 font-medium">${h}</th>`
-      })
-      table += '</tr></thead><tbody>'
-      rows.forEach((row: string[]) => {
-        table += '<tr class="border-b border-white/5 hover:bg-white/5">'
-        row.forEach((cell: string) => {
-          // Highlight positive/negative values
-          let cellClass = "px-3 py-2 text-zinc-300"
-          if (cell.includes('+') || cell.toLowerCase().includes('positive') || cell.toLowerCase().includes('strong')) {
-            cellClass += " text-emerald-400"
-          } else if (cell.includes('-') && !cell.includes('Not') || cell.toLowerCase().includes('negative') || cell.toLowerCase().includes('weak')) {
-            cellClass += " text-rose-400"
-          }
-          table += `<td class="${cellClass}">${cell}</td>`
-        })
-        table += '</tr>'
-      })
-      table += '</tbody></table></div>'
-      return table
+    headers.forEach((h: string) => {
+      table += `<th class="px-3 py-2 text-left text-zinc-100 font-semibold bg-white/5">${h}</th>`
     })
-    
-    // Handle headers
-    t = t.replace(/^### (.+)$/gm, '<h4 class="text-sm font-semibold text-white mt-4 mb-2">$1</h4>')
-    t = t.replace(/^## (.+)$/gm, '<h3 class="text-base font-semibold text-white mt-4 mb-2">$1</h3>')
-    
-    // Handle emoji headers like 📊 **TITLE**:
-    t = t.replace(/([\u{1F300}-\u{1F9FF}])\s*\*\*([^*]+)\*\*:?/gu, '<div class="flex items-center gap-2 mt-4 mb-2"><span class="text-lg">$1</span><span class="text-sm font-semibold text-white">$2</span></div>')
-    
-    // Handle bullet points
-    t = t.replace(/^- \*\*([^*]+)\*\*:?\s*(.*)$/gm, '<div class="flex items-start gap-2 my-1"><span class="text-cyan-400 mt-1">•</span><span><strong class="text-zinc-200">$1:</strong> <span class="text-zinc-400">$2</span></span></div>')
-    t = t.replace(/^- (.+)$/gm, '<div class="flex items-start gap-2 my-1"><span class="text-zinc-500 mt-1">•</span><span class="text-zinc-300">$1</span></div>')
-    
-    // Standard markdown
-    t = t.replace(/\*\*(.+?)\*\*/g, '<strong class="text-zinc-100">$1</strong>')
-    t = t.replace(/\*(.+?)\*/g, '<em>$1</em>')
-    t = t.replace(/`(.+?)`/g, '<code class="px-1 py-0.5 rounded bg-white/10 text-cyan-400 text-xs">$1</code>')
+    table += '</tr></thead><tbody>'
+    rows.forEach((row: string[]) => {
+      table += '<tr class="border-b border-white/5 hover:bg-white/10 transition-colors">'
+      row.forEach((cell: string) => {
+        // Highlight positive/negative values
+        let cellClass = "px-3 py-2 text-zinc-200"
+        if (cell.includes('+') || cell.toLowerCase().includes('positive') || cell.toLowerCase().includes('strong')) {
+          cellClass += " text-emerald-400 font-medium"
+        } else if (cell.includes('-') && !cell.includes('Not') || cell.toLowerCase().includes('negative') || cell.toLowerCase().includes('weak')) {
+          cellClass += " text-rose-400 font-medium"
+        }
+        table += `<td class="${cellClass}">${cell}</td>`
+      })
+      table += '</tr>'
+    })
+    table += '</tbody></table></div>'
+    return table
+  })
+  
+  // Handle headers
+  t = t.replace(/^### (.+)$/gm, '<h4 class="text-base font-bold text-white mt-6 mb-3 tracking-tight">$1</h4>')
+  t = t.replace(/^## (.+)$/gm, '<h3 class="text-lg font-bold text-white mt-8 mb-4 tracking-tight border-b border-white/10 pb-2">$1</h3>')
+  
+  // Handle emoji headers like 📊 **TITLE**:
+  t = t.replace(/([\u{1F300}-\u{1F9FF}])\s*\*\*([^*]+)\*\*:?/gu, '<div class="flex items-center gap-2 mt-6 mb-3"><span class="text-xl">$1</span><span class="text-base font-bold text-white tracking-tight">$2</span></div>')
+  
+  // Handle bullet points
+  t = t.replace(/^- \*\*([^*]+)\*\*:?\s*(.*)$/gm, '<div class="flex items-start gap-3 my-2.5"><div class="w-1.5 h-1.5 rounded-full bg-cyan-500/50 mt-2 flex-shrink-0" /><span><strong class="text-white font-semibold">$1:</strong> <span class="text-zinc-100">$2</span></span></div>')
+  t = t.replace(/^- (.+)$/gm, '<div class="flex items-start gap-3 my-2.5"><div class="w-1.5 h-1.5 rounded-full bg-zinc-700 mt-2 flex-shrink-0" /><span class="text-zinc-100">$1</span></div>')
+  
+  // Standard markdown
+  t = t.replace(/\*\*(.+?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
+  t = t.replace(/\*(.+?)\*/g, '<em class="text-zinc-200">$1</em>')
+  t = t.replace(/`(.+?)`/g, '<code class="px-1.5 py-0.5 rounded bg-white/10 text-cyan-300 font-mono text-xs">$1</code>')
+
     
     // Handle line breaks (but not inside tables)
     t = t.replace(/\n\n/g, '<br/><br/>')
@@ -300,6 +303,22 @@ export function AISummaryPanel({
 
   const handleReanalyze = () => {
     generateSummary(true)
+  }
+
+  const handleCopySummary = () => {
+    if (!aiSummary) return
+    const text = `*Speedy AI Summary - ${ticker || company}*\n\n*Verdict:* ${getVerdictLabel(aiSummary.verdict.type)} (${aiSummary.verdict.confidence}% Confidence)\n\n*Headline:* ${headline}\n\n*Summary:* ${aiSummary.simpleSummary.replace(/<[^>]*>?/gm, '')}\n\n*Key Insights:*\n${aiSummary.keyInsights.map((i, idx) => `${idx + 1}. ${i}`).join('\n')}\n\nAnalyzed with Speedy Finance AI`
+    
+    navigator.clipboard.writeText(text).then(() => {
+      setCopyStatus('copied')
+      setTimeout(() => setCopyStatus('idle'), 2000)
+    })
+  }
+
+  const handleShareWhatsApp = () => {
+    if (!aiSummary) return
+    const text = encodeURIComponent(`*Speedy AI Summary - ${ticker || company}*\n\n*Verdict:* ${getVerdictLabel(aiSummary.verdict.type)}\n\n${headline}\n\nRead more on Speedy Finance AI`)
+    window.open(`https://wa.me/?text=${text}`, '_blank')
   }
 
   if (loading) {
@@ -431,6 +450,31 @@ export function AISummaryPanel({
           >
             <RefreshCw className={`h-3 w-3 ${isReanalyzing ? "animate-spin" : ""}`} />
             <span className="hidden sm:inline">{isReanalyzing ? "Analyzing..." : "Re-analyze"}</span>
+          </button>
+
+          {/* Copy Summary Button */}
+          <button
+            onClick={handleCopySummary}
+            className={clsx(
+              "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all text-[10px] font-medium",
+              copyStatus === 'copied' 
+                ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400" 
+                : "bg-white/5 hover:bg-white/10 border-white/10 text-zinc-400 hover:text-white"
+            )}
+            title="Copy formatted summary for WhatsApp/Notes"
+          >
+            {copyStatus === 'copied' ? <CheckCircle className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
+            <span>{copyStatus === 'copied' ? 'Copied' : 'Copy'}</span>
+          </button>
+
+          {/* Share WhatsApp Button */}
+          <button
+            onClick={handleShareWhatsApp}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 text-[10px] font-medium text-emerald-400 transition-all"
+            title="Share brief to WhatsApp"
+          >
+            <Share2 className="h-3 w-3" />
+            <span>Share</span>
           </button>
         </div>
       </div>
@@ -598,10 +642,11 @@ export function AISummaryPanel({
             })}
           </p>
         )}
-        <div
-          className="text-sm text-zinc-300 leading-relaxed"
-          dangerouslySetInnerHTML={{ __html: mdToHtml(aiSummary.simpleSummary) }}
-        />
+          <div
+            className="text-[15px] text-zinc-100 leading-relaxed font-medium"
+            dangerouslySetInnerHTML={{ __html: mdToHtml(aiSummary.simpleSummary) }}
+          />
+
         {impactMeta && (
           <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-2 text-[11px]">
             <div className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 border ${impactMeta.pillClass}`}>

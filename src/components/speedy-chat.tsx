@@ -2,11 +2,13 @@
 
 import { useState, useRef, useEffect } from "react"
 import { 
-  Send, Bot, User, X, FileText, Mic, MicOff, Globe, Paperclip,
-  Loader2, ChevronRight, Sparkles, MessageCircle, PanelRightOpen, 
-  PanelRightClose, ExternalLink, Clock, ArrowRight, Volume2, VolumeX
-} from "lucide-react"
+    Send, Bot, User, X, FileText, Mic, MicOff, Globe, Paperclip,
+    Loader2, ChevronRight, Sparkles, MessageCircle, PanelRightOpen, 
+    PanelRightClose, ExternalLink, Clock, ArrowRight, Volume2, VolumeX, Mic2
+  } from "lucide-react"
 import type { BSEAnnouncement } from "@/lib/bse/types"
+import { VoiceAnalyst } from "./VoiceAnalyst"
+
 
 interface PdfCitation {
   page: number
@@ -98,9 +100,11 @@ export function SpeedyChat({
   const [webSearch, setWebSearch] = useState(false)
   const [currentMode, setCurrentMode] = useState(mode)
   const [asked, setAsked] = useState<string[]>([])
-  const [attachments, setAttachments] = useState<Attachment[]>([])
-  const [autoSpeak, setAutoSpeak] = useState(false)
-  const [showRecent, setShowRecent] = useState(false)
+    const [attachments, setAttachments] = useState<Attachment[]>([])
+    const [autoSpeak, setAutoSpeak] = useState(false)
+    const [isVoiceOracleOpen, setIsVoiceOracleOpen] = useState(false)
+    const [showRecent, setShowRecent] = useState(false)
+
   
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -300,13 +304,26 @@ export function SpeedyChat({
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" onClick={onClose} />
       )}
       
-      <div className={`fixed z-50 flex flex-col bg-zinc-950 ${
-        isSidebar 
-          ? "right-0 top-0 h-full w-80 border-l border-white/10" 
-          : "bottom-4 right-4 w-[380px] h-[540px] rounded-2xl border border-white/10 shadow-2xl shadow-black/50"
-      }`}>
-        
-        {/* Header - Minimal */}
+        <div className={`fixed z-50 flex flex-col bg-zinc-950 overflow-hidden ${
+          isSidebar 
+            ? "right-0 top-0 h-full w-80 border-l border-white/10" 
+            : "bottom-4 right-4 w-[380px] h-[540px] rounded-2xl border border-white/10 shadow-2xl shadow-black/50"
+        }`}>
+          {/* Integrated Voice Oracle Overlay */}
+          {isVoiceOracleOpen && (
+            <div className="absolute top-12 left-0 right-0 bottom-0 z-[60] bg-black/80 backdrop-blur-md p-4 flex flex-col items-center justify-center pointer-events-auto">
+              <VoiceAnalyst 
+                isOpen={isVoiceOracleOpen} 
+                onClose={() => setIsVoiceOracleOpen(false)}
+                ticker={activeAnnouncement.ticker}
+                company={activeAnnouncement.company}
+                variant="integrated"
+              />
+            </div>
+          )}
+          
+          {/* Header - Minimal */}
+
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
           <div className="flex items-center gap-2.5">
             {/* Orb */}
@@ -322,9 +339,17 @@ export function SpeedyChat({
             </div>
           </div>
           
-          <div className="flex items-center gap-0.5">
-            <button
-              onClick={() => setCurrentMode(isSidebar ? "popup" : "sidebar")}
+            <div className="flex items-center gap-0.5">
+              <button
+                onClick={() => setIsVoiceOracleOpen(!isVoiceOracleOpen)}
+                className={`p-1.5 rounded-lg transition-all ${isVoiceOracleOpen ? "text-cyan-400 bg-cyan-500/10 shadow-[0_0_10px_-2px_rgba(6,182,212,0.4)]" : "text-zinc-500 hover:text-white hover:bg-white/5"}`}
+                title={isVoiceOracleOpen ? "Close Voice Oracle" : "Open Voice Oracle"}
+              >
+                <Mic2 className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setCurrentMode(isSidebar ? "popup" : "sidebar")}
+
               className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5"
               title={isSidebar ? "Popup" : "Sidebar"}
             >

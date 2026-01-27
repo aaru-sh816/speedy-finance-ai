@@ -3,10 +3,7 @@
 import { useState } from "react"
 import { Brain, ChevronDown, ChevronUp, Sparkles, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react"
 import { type DealPrediction, getPredictionDisplay } from "@/lib/bulk-deals/aiPredictions"
-
-function clsx(...v: (string | false | undefined)[]) { 
-  return v.filter(Boolean).join(" ") 
-}
+import { clsx } from "clsx"
 
 interface AIPredictionBadgeProps {
   prediction: DealPrediction

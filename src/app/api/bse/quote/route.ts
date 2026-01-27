@@ -159,35 +159,79 @@ export async function GET(request: NextRequest) {
     const dayHigh = data.dayHigh ?? data.high ?? null
     const dayLow = data.dayLow ?? data.low ?? null
 
-    const marketCap =
+    let marketCap =
       data.marketCapFull ??
       data.marketCapFreeFloat ??
       data.marketCap ??
       data.mktCap ??
       null
 
+    // Fallback for market cap if missing and it's a BSE code
+    if (marketCap == null && isBseScripCode(symbol)) {
+      try {
+        const bseServiceUrl = process.env.BSE_SERVICE_URL || 'http://localhost:8080'
+        // Correct endpoint in app.py is /api/company/<scrip_code>
+        const headerRes = await fetch(`${bseServiceUrl}/api/company/${symbol}`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(3000)
+        })
+        if (headerRes.ok) {
+          const headerJson = await headerRes.json()
+          if (headerJson.success && headerJson.data?.quote) {
+            const q = headerJson.data.quote
+            marketCap = q.marketCapFull || q.marketCapFreeFloat || q.marketCap || q.mktCap || null
+          }
+        }
+      } catch (e) {
+        // Ignore header fallback error
+      }
+    }
+
+    // Secondary fallback using direct BSE ScripHeaderData API
+    if (marketCap == null && isBseScripCode(symbol)) {
+      try {
+        const bseHeaderUrl = `https://api.bseindia.com/BseIndiaAPI/api/getScripHeaderData/w?scripcode=${symbol}`
+        const directHeaderRes = await fetch(bseHeaderUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://www.bseindia.com/',
+          },
+          cache: 'no-store',
+          signal: AbortSignal.timeout(3000)
+        })
+        if (directHeaderRes.ok) {
+          const hData = await directHeaderRes.json()
+          // Extract MCap from BSE header data - usually in 'MktCapFull' or 'MktCapFF'
+          marketCap = hData.MktCapFull || hData.MktCapFF || hData.CurrMktCap || null
+        }
+      } catch (e) {}
+    }
+
+    const parseNumber = (val: any) => {
+      if (val == null || val === '') return null
+      if (typeof val === 'number') return val
+      if (typeof val === 'string') {
+        const cleaned = val.replace(/,/g, '').replace(/[^\d.-]/g, '').trim()
+        const num = parseFloat(cleaned)
+        return isNaN(num) ? null : num
+      }
+      return null
+    }
+
     // Transform to match existing Quote interface
     return NextResponse.json({
       symbol: symbol.toUpperCase(),
-      price: price != null ? Number(price) : null,
-      change: change != null ? Number(change) : null,
-      changePercent: changePercent != null ? Number(changePercent) : null,
-      volume: volume != null ? Number(volume) : null,
-      dayHigh: dayHigh != null ? Number(dayHigh) : null,
-      dayLow: dayLow != null ? Number(dayLow) : null,
-      marketCap: marketCap != null ? Number(marketCap) : null,
-      open: data.previousOpen != null ? Number(data.previousOpen) : (data.open != null ? Number(data.open) : null),
-      previousClose: data.previousClose != null ? Number(data.previousClose) : (data.prevClose != null ? Number(data.prevClose) : null),
-        fiftyTwoWeekHigh: data.weekHigh52 != null
-          ? Number(data.weekHigh52)
-          : (data.fiftyTwoWeekHigh != null
-            ? Number(data.fiftyTwoWeekHigh)
-            : (data['52weekHigh'] != null ? Number(data['52weekHigh']) : (data['52WeekHigh'] != null ? Number(data['52WeekHigh']) : null))),
-        fiftyTwoWeekLow: data.weekLow52 != null
-          ? Number(data.weekLow52)
-          : (data.fiftyTwoWeekLow != null
-            ? Number(data.fiftyTwoWeekLow)
-            : (data['52weekLow'] != null ? Number(data['52weekLow']) : (data['52WeekLow'] != null ? Number(data['52WeekLow']) : null))),
+      price: parseNumber(price),
+      change: parseNumber(change),
+      changePercent: parseNumber(changePercent),
+      volume: parseNumber(volume),
+      dayHigh: parseNumber(dayHigh),
+      dayLow: parseNumber(dayLow),
+      marketCap: parseNumber(marketCap),
+      open: parseNumber(data.previousOpen ?? data.open),
+      previousClose: parseNumber(data.previousClose ?? data.prevClose),
+        fiftyTwoWeekHigh: parseNumber(data.weekHigh52 ?? data.fiftyTwoWeekHigh ?? data['52weekHigh'] ?? data['52WeekHigh']),
+        fiftyTwoWeekLow: parseNumber(data.weekLow52 ?? data.fiftyTwoWeekLow ?? data['52weekLow'] ?? data['52WeekLow']),
       timestamp: new Date().toISOString(),
       raw: data
     })

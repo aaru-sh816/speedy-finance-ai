@@ -73,6 +73,11 @@ export type BSEAnnouncement = {
   pdfSize?: number // File size in bytes
   disseminationTime?: string // When it was disseminated
   submissionTime?: string // When it was submitted
+  // Market data fields (populated via batch quote fetching)
+  marketCap?: number // Market cap in crores
+  price?: number // Current price
+  changePercent?: number // Price change percentage
+  quoteLoading?: boolean // Loading state for quote
 }
 
 // Impact scoring based on category/subcategory
@@ -256,21 +261,34 @@ export function normalizeBSEAnnouncement(raw: BSERawAnnouncement): BSEAnnounceme
   }
 
   const when = parseBSETime(raw.DissemDT || raw.DT_TM || raw.NEWS_DT)
-  
-  return {
-    id: raw.NEWSID,
-    ticker,
-    scripCode: raw.SCRIP_CD,
-    company,
-    headline: raw.HEADLINE || "",
-    summary: raw.NEWSSUB || raw.HEADLINE || "",
-    category,
-    subCategory,
-    impact: deriveImpact(category, subCategory, headline),
-    time: when,
-    pdfUrl: raw.ATTACHMENTNAME
-      ? `https://www.bseindia.com/xml-data/corpfiling/AttachLive/${raw.ATTACHMENTNAME}`
-      : null,
+    
+    const isRecent = (() => {
+      try {
+        const announcementDate = new Date(when)
+        const threeDaysAgo = new Date()
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3)
+        return announcementDate > threeDaysAgo
+      } catch {
+        return true
+      }
+    })()
+    
+    const pdfPath = isRecent ? 'AttachLive' : 'AttachHis'
+    
+    return {
+      id: raw.NEWSID,
+      ticker,
+      scripCode: raw.SCRIP_CD,
+      company,
+      headline: raw.HEADLINE || "",
+      summary: raw.NEWSSUB || raw.HEADLINE || "",
+      category,
+      subCategory,
+      impact: deriveImpact(category, subCategory, headline),
+      time: when,
+      pdfUrl: raw.ATTACHMENTNAME
+        ? `https://www.bseindia.com/xml-data/corpfiling/${pdfPath}/${raw.ATTACHMENTNAME}`
+        : null,
     source: "BSE",
     tags: deriveTags(category, subCategory, headline),
     isCritical: raw.CRITICALNEWS === "Y",

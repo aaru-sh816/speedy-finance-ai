@@ -2,15 +2,17 @@
 
 import { useState, useRef, useEffect, useCallback } from "react"
 import { 
-  Send, Bot, User, X, FileText, Mic, MicOff, Globe, Paperclip,
-  Loader2, ChevronRight, Sparkles, MessageCircle, Maximize2, Minimize2,
-  ExternalLink, Clock, GripVertical, Layers, ChevronDown, ChevronUp,
-  TrendingUp, TrendingDown, BarChart3, Calculator, AlertCircle, Zap,
-  Target, PieChart, ArrowUpRight, ArrowDownRight, Check, Copy,
-  ThumbsUp, ThumbsDown, Volume2, VolumeX, Download, Share2, Calendar,
-  IndianRupee, Percent, Hash, Upload, Image as ImageIcon, Activity
-} from "lucide-react"
+    Send, Bot, User, X, FileText, Mic, MicOff, Globe, Paperclip,
+    Loader2, ChevronRight, Sparkles, MessageCircle, Maximize2, Minimize2,
+    ExternalLink, Clock, GripVertical, Layers, ChevronDown, ChevronUp,
+    TrendingUp, TrendingDown, BarChart3, Calculator, AlertCircle, Zap,
+    Target, PieChart, ArrowUpRight, ArrowDownRight, Check, Copy,
+    ThumbsUp, ThumbsDown, Volume2, VolumeX, Download, Share2, Calendar,
+    IndianRupee, Percent, Hash, Upload, Image as ImageIcon, Activity, Mic2
+  } from "lucide-react"
 import type { BSEAnnouncement } from "@/lib/bse/types"
+import { VoiceAnalyst } from "./VoiceAnalyst"
+
 
 interface PdfCitation {
   page: number
@@ -840,8 +842,10 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
   const [selectedDocs, setSelectedDocs] = useState<string[]>([])
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [isSpeaking, setIsSpeaking] = useState(false)
-  const [isMaximized, setIsMaximized] = useState(initialMaximized)
-  const [hasHydratedHistory, setHasHydratedHistory] = useState(false)
+    const [isMaximized, setIsMaximized] = useState(initialMaximized)
+    const [isVoiceOracleOpen, setIsVoiceOracleOpen] = useState(false)
+    const [hasHydratedHistory, setHasHydratedHistory] = useState(false)
+
   
   // PIP State
   const [isExpanded, setIsExpanded] = useState(initialMaximized || false)
@@ -862,6 +866,31 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
   
   const storageKey = `speedy-chat-${initialAnnouncement.scripCode}`
 
+  // Hydrate chat history from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem(storageKey)
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved)
+        const revived = parsed.map((m: any) => ({
+          ...m,
+          timestamp: new Date(m.timestamp)
+        }))
+        setMessages(revived)
+      } catch (e) {
+        console.error("Failed to load chat history", e)
+      }
+    }
+    setHasHydratedHistory(true)
+  }, [storageKey])
+
+  // Save chat history to localStorage
+  useEffect(() => {
+    if (hasHydratedHistory && messages.length > 0) {
+      localStorage.setItem(storageKey, JSON.stringify(messages))
+    }
+  }, [messages, storageKey, hasHydratedHistory])
+
   // Stabilize preSelectedDocIds to prevent infinite loops
   const preSelectedDocIdsKey = JSON.stringify(preSelectedDocIds)
 
@@ -870,10 +899,7 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
     a => a.scripCode === activeAnnouncement.scripCode && a.id !== activeAnnouncement.id
   )
 
-  // We do not persist chat history across sessions anymore to keep each stock/session fresh
-  useEffect(() => {
-    setHasHydratedHistory(true)
-  }, [])
+
 
   // Update state when initialMaximized or isOpen changes
   useEffect(() => {
@@ -1476,9 +1502,18 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
           </div>
         </div>
         
-        <div className="flex items-center gap-0.5">
-          <button
-            onClick={() => setWebSearch(!webSearch)}
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => setIsVoiceOracleOpen(!isVoiceOracleOpen)}
+              className={`p-1.5 rounded-md transition-all ${isVoiceOracleOpen ? "text-cyan-400 bg-cyan-500/10 shadow-[0_0_10px_-2px_rgba(6,182,212,0.4)]" : "text-zinc-600 hover:text-zinc-400 hover:bg-white/5"}`}
+              title={isVoiceOracleOpen ? "Close Voice Oracle" : "Open Voice Oracle"}
+            >
+              <Mic2 className="h-3.5 w-3.5" />
+            </button>
+            
+            <button
+              onClick={() => setWebSearch(!webSearch)}
+
             className={`p-1.5 rounded-md transition-colors ${webSearch ? "text-cyan-400 bg-cyan-500/10" : "text-zinc-600 hover:text-zinc-400 hover:bg-white/5"}`}
             title="Web search"
           >
@@ -1508,6 +1543,19 @@ export function SpeedyPipChat({ announcement: initialAnnouncement, isOpen, onClo
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
+
+        {/* Integrated Voice Oracle Overlay */}
+        {isVoiceOracleOpen && (
+          <div className="absolute top-10 left-0 right-0 bottom-0 z-[60] bg-black/80 backdrop-blur-md p-4 flex flex-col items-center justify-center pointer-events-auto">
+            <VoiceAnalyst 
+              isOpen={isVoiceOracleOpen} 
+              onClose={() => setIsVoiceOracleOpen(false)}
+              ticker={activeAnnouncement.ticker}
+              company={activeAnnouncement.company}
+              variant="integrated"
+            />
+          </div>
+        )}
       </div>
 
       {/* Documents Panel */}

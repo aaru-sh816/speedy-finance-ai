@@ -220,9 +220,10 @@ export async function fetchAllBSEAnnouncements(options?: {
 
 export async function fetchCompanyAnnouncements(
   scripCode: string,
-  days = 30
+  days = 365,
+  maxPages = 10
 ): Promise<BSEAnnouncement[]> {
-  const cacheKey = `company:${scripCode}:days:${days}`
+  const cacheKey = `company:${scripCode}:days:${days}:pages:${maxPages}`
   
   const cached = companyCache.get(cacheKey)
   if (cached) {
@@ -236,14 +237,33 @@ export async function fetchCompanyAnnouncements(
   const fromDate = new Date()
   fromDate.setDate(fromDate.getDate() - days)
 
-  const { announcements } = await fetchBSEAnnouncements({
-    scripCode,
-    fromDate,
-    toDate,
-  })
+  const all: BSEAnnouncement[] = []
+  let pageNo = 1
+  let totalCount = Infinity
 
-  companyCache.set(cacheKey, announcements)
-  return announcements
+  while (all.length < totalCount && pageNo <= maxPages) {
+    const { announcements, totalCount: count } = await fetchBSEAnnouncements({
+      scripCode,
+      fromDate,
+      toDate,
+      pageNo,
+    })
+
+    if (pageNo === 1) {
+      totalCount = count
+    }
+
+    if (announcements.length === 0) break
+
+    all.push(...announcements)
+    pageNo++
+
+    // Small delay between pages
+    await new Promise((r) => setTimeout(r, 100))
+  }
+
+  companyCache.set(cacheKey, all)
+  return all
 }
 
 // Get unique categories from announcements

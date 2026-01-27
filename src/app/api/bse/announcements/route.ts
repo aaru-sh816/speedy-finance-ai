@@ -12,12 +12,14 @@ export async function GET(request: Request) {
   const fromDateStr = searchParams.get("fromDate")
   const toDateStr = searchParams.get("toDate")
   const category = searchParams.get("category") || undefined
-  const maxPagesStr = searchParams.get("maxPages")
-  const maxPages = maxPagesStr ? parseInt(maxPagesStr, 10) : 5
-  const useMock = searchParams.get("mock") === "true"
   
   // IMPORTANT: Handle scripCode filter for company-specific announcements
   const scripCode = searchParams.get("scripCode")
+  const daysStr = searchParams.get("days")
+  const days = daysStr ? parseInt(daysStr, 10) : 365
+  const maxPagesStr = searchParams.get("maxPages")
+  const maxPages = maxPagesStr ? parseInt(maxPagesStr, 10) : (scripCode ? 10 : 5)
+  const useMock = searchParams.get("mock") === "true"
 
   // Parse dates if provided
   const fromDate = fromDateStr ? new Date(fromDateStr) : undefined
@@ -36,9 +38,9 @@ export async function GET(request: Request) {
       }
     } else if (scripCode) {
       // Fetch company-specific announcements
-      console.log(`[Announcements API] Fetching for scripCode: ${scripCode}`)
-      announcements = await fetchCompanyAnnouncements(scripCode, 30)
-      
+      console.log(`[Announcements API] Fetching for scripCode: ${scripCode}, days: ${days}, maxPages: ${maxPages}`)
+      announcements = await fetchCompanyAnnouncements(scripCode, days, maxPages)
+
       // Fall back to mock data if no results
       if (announcements.length === 0) {
         console.log(`[Announcements API] No data for ${scripCode}, using mock`)
@@ -66,8 +68,32 @@ export async function GET(request: Request) {
     const categories = extractCategories(announcements)
     const companies = extractCompanies(announcements)
 
+    // Improve generic headlines
+    const improvedAnnouncements = announcements.map((a: any) => {
+      const genericPatterns = [
+        /announcement.*attached/i,
+        /as.*attached/i,
+        /details.*attached/i,
+        /attached.*herewith/i,
+        /disclosure.*under.*reg/i,
+        /intimation.*under.*listing/i
+      ];
+
+      const isGeneric = genericPatterns.some(p => p.test(a.headline));
+      
+      if (isGeneric && (a.category || a.subCategory)) {
+        const companyName = a.company || a.ticker || "Company";
+        const categoryPart = a.subCategory || a.category || "Update";
+        const datePart = a.time ? new Date(a.time).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : "";
+        
+        // synthesized headline: "HAL - Financial Results (12 Nov)"
+        a.headline = `${companyName} - ${categoryPart}${datePart ? ` (${datePart})` : ""}`;
+      }
+      return a;
+    });
+
     return NextResponse.json({
-      announcements,
+      announcements: improvedAnnouncements,
       meta: {
         count: announcements.length,
         categories,

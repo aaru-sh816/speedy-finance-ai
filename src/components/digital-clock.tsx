@@ -26,9 +26,9 @@ export function DigitalClock() {
   if (!time) return null
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-zinc-400">
-      <Clock className="h-3.5 w-3.5" />
-      <span className="text-xs font-medium font-mono tracking-wider">{time}</span>
+    <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-950/50 border border-white/5 text-zinc-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-sm">
+      <Clock className="h-3.5 w-3.5 text-zinc-500" />
+      <span className="text-xs font-black font-mono tracking-widest uppercase text-zinc-300">{time}</span>
     </div>
   )
 }

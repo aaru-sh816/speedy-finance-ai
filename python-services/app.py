@@ -226,8 +226,52 @@ def get_quote(scrip_code):
         quote_data = bse.getQuote(scrip_code)
         if quote_data:
             quote_cache.set(cache_key, quote_data)
-        return jsonify({'success': True, 'data': quote_data, 'cached': False})
+            return jsonify({'success': True, 'data': quote_data, 'cached': False})
+        else:
+            return jsonify({'success': False, 'error': 'No quote data available', 'scrip_code': scrip_code}), 404
+    except IndexError as e:
+        logger.warning(f"Quote parsing error for {scrip_code}: BSE returned malformed data")
+        return jsonify({'success': False, 'error': 'Quote data temporarily unavailable from BSE', 'scrip_code': scrip_code}), 503
+    except AttributeError as e:
+        error_msg = str(e)
+        if "'NoneType'" in error_msg:
+            # Check if it was because of restriction even if caught as AttributeError
+            if 'Restricted' in error_msg or 'GSSM' in error_msg or 'GSM' in error_msg:
+                 return jsonify({
+                    'success': True, 
+                    'data': {
+                        'scrip_code': scrip_code,
+                        'status': 'Restricted',
+                        'message': error_msg,
+                        'currentValue': None,
+                        'pChange': 0,
+                        'restricted': True
+                    },
+                    'restricted': True
+                }), 200
+            logger.warning(f"Quote unavailable for {scrip_code}: Stock may be inactive or delisted")
+            return jsonify({'success': False, 'error': 'Stock may be inactive or delisted', 'scrip_code': scrip_code}), 404
+        logger.error(f"Error fetching quote for {scrip_code}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 400
     except Exception as e:
+        error_msg = str(e)
+        if 'list index out of range' in error_msg:
+            logger.warning(f"Quote parsing error for {scrip_code}: BSE returned unexpected format")
+            return jsonify({'success': False, 'error': 'Quote data temporarily unavailable from BSE', 'scrip_code': scrip_code}), 503
+        if 'Inactive' in error_msg or 'delisted' in error_msg.lower() or 'Suspended' in error_msg or 'Restricted' in error_msg or 'GSSM' in error_msg or 'GSM' in error_msg:
+            logger.warning(f"Unavailable/Restricted stock {scrip_code}: {error_msg}")
+            return jsonify({
+                'success': True, 
+                'data': {
+                    'scrip_code': scrip_code,
+                    'status': 'Restricted',
+                    'message': error_msg,
+                    'currentValue': None,
+                    'pChange': 0,
+                    'restricted': True
+                },
+                'restricted': True
+            }), 200
         logger.error(f"Error fetching quote for {scrip_code}: {e}")
         return jsonify({'success': False, 'error': str(e)}), 400
 
@@ -262,20 +306,42 @@ def extract_pdf():
             # Keep only until .pdf
             pdf_url = pdf_url.split('.pdf')[0] + '.pdf'
         
+        # Generate both AttachHis and AttachLive variants for BSE PDFs
+        pdf_urls_to_try = [pdf_url]
+        if 'bseindia.com' in pdf_url.lower():
+            if '/AttachLive/' in pdf_url:
+                pdf_urls_to_try = [
+                    pdf_url.replace('/AttachLive/', '/AttachHis/'),
+                    pdf_url
+                ]
+            elif '/AttachHis/' in pdf_url:
+                pdf_urls_to_try = [
+                    pdf_url,
+                    pdf_url.replace('/AttachHis/', '/AttachLive/')
+                ]
+        
         cache_key = f'pdf:{hashlib.md5(pdf_url.encode()).hexdigest()}'
         cached = pdf_cache.get(cache_key)
         if cached:
             return jsonify({'success': True, **cached, 'cached': True})
         
-        def fetch_and_parse():
+        def fetch_and_parse(url):
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'application/pdf,*/*',
                 'Referer': 'https://www.bseindia.com/'
             }
             
-            response = requests.get(pdf_url, headers=headers, timeout=30)
+            response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
+            
+            # Check if we got a PDF
+            content_type = response.headers.get('content-type', '').lower()
+            if 'text/html' in content_type:
+                raise ValueError(f"Got HTML instead of PDF from {url}")
+            
+            if len(response.content) < 1000:
+                raise ValueError(f"Response too small ({len(response.content)} bytes), likely error page")
             
             pdf_bytes = io.BytesIO(response.content)
             
@@ -328,20 +394,36 @@ def extract_pdf():
                 'page_count': page_count,
                 'text_preview': combined_text[:2000],
                 'financial_figures': sorted(set(financial_figures), reverse=True)[:50],
-                'extracted_at': datetime.now().isoformat()
+                'extracted_at': datetime.now().isoformat(),
+                'source_url': url
             }
         
-        future = THREAD_POOL.submit(fetch_and_parse)
-        try:
-            result = future.result(timeout=45)
-            pdf_cache.set(cache_key, result)
-            return jsonify({'success': True, **result, 'cached': False})
-        except FuturesTimeoutError:
-            return jsonify({'success': False, 'error': 'PDF extraction timed out'}), 504
+        # Try each URL variant
+        last_error = None
+        for try_url in pdf_urls_to_try:
+            try:
+                logger.info(f"Trying PDF extraction from: {try_url[:80]}...")
+                future = THREAD_POOL.submit(fetch_and_parse, try_url)
+                result = future.result(timeout=45)
+                logger.info(f"PDF extraction success from: {try_url[:80]}")
+                pdf_cache.set(cache_key, result)
+                return jsonify({'success': True, **result, 'cached': False})
+            except FuturesTimeoutError:
+                last_error = 'PDF extraction timed out'
+                logger.warning(f"Timeout for {try_url[:60]}")
+            except requests.exceptions.RequestException as e:
+                last_error = f'Failed to download PDF: {str(e)}'
+                logger.warning(f"Download failed for {try_url[:60]}: {e}")
+            except ValueError as e:
+                last_error = str(e)
+                logger.warning(f"Invalid response for {try_url[:60]}: {e}")
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Error for {try_url[:60]}: {e}")
         
-    except requests.exceptions.RequestException as e:
-        logger.error(f"PDF download error: {e}")
-        return jsonify({'success': False, 'error': f'Failed to download PDF: {str(e)}'}), 502
+        # All URLs failed
+        return jsonify({'success': False, 'error': last_error or 'Failed to extract PDF from all URL variants'}), 502
+        
     except Exception as e:
         logger.error(f"PDF extraction error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -360,6 +442,9 @@ def get_company_details(scrip_code):
     try:
         quote_data = bse.getQuote(scrip_code)
         
+        if not quote_data:
+            return jsonify({'success': False, 'error': 'Company data not available', 'scrip_code': scrip_code}), 404
+        
         company_data = {
             'scrip_code': scrip_code,
             'quote': quote_data,
@@ -368,7 +453,44 @@ def get_company_details(scrip_code):
         
         quote_cache.set(cache_key, company_data)
         return jsonify({'success': True, 'data': company_data, 'cached': False})
+    except IndexError as e:
+        logger.warning(f"Company data parsing error for {scrip_code}: BSE returned malformed data")
+        return jsonify({'success': False, 'error': 'Company data temporarily unavailable from BSE', 'scrip_code': scrip_code}), 503
+    except AttributeError as e:
+        error_msg = str(e)
+        if "'NoneType'" in error_msg:
+            if 'Restricted' in error_msg or 'GSSM' in error_msg or 'GSM' in error_msg:
+                 return jsonify({
+                    'success': True, 
+                    'data': {
+                        'scrip_code': scrip_code,
+                        'status': 'Restricted',
+                        'message': error_msg,
+                        'restricted': True
+                    },
+                    'restricted': True
+                }), 200
+            logger.warning(f"Company data unavailable for {scrip_code}: Stock may be inactive or delisted")
+            return jsonify({'success': False, 'error': 'Stock may be inactive or delisted', 'scrip_code': scrip_code}), 404
+        logger.error(f"Error fetching company {scrip_code}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 400
     except Exception as e:
+        error_msg = str(e)
+        if 'list index out of range' in error_msg:
+            logger.warning(f"Company data parsing error for {scrip_code}: BSE returned unexpected format")
+            return jsonify({'success': False, 'error': 'Company data temporarily unavailable from BSE', 'scrip_code': scrip_code}), 503
+        if 'Inactive' in error_msg or 'delisted' in error_msg.lower() or 'Suspended' in error_msg or 'Restricted' in error_msg or 'GSSM' in error_msg or 'GSM' in error_msg:
+            logger.warning(f"Unavailable/Restricted company {scrip_code}: {error_msg}")
+            return jsonify({
+                'success': True, 
+                'data': {
+                    'scrip_code': scrip_code,
+                    'status': 'Restricted',
+                    'message': error_msg,
+                    'restricted': True
+                },
+                'restricted': True
+            }), 200
         logger.error(f"Error fetching company {scrip_code}: {e}")
         return jsonify({'success': False, 'error': str(e)}), 400
 

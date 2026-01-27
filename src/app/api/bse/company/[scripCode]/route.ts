@@ -145,21 +145,23 @@ async function fetchCompanyInfo(scripCode: string) {
     
     // console.log(`[Company Info] Response:`, JSON.stringify(data).substring(0, 300))
     
-    // Parse response - BSE returns different formats
-    const header = data?.Header || data
-    
-    return {
-      scripCode,
-      symbol: header?.SLONGNAME || header?.ShortN || header?.ScripName || scripCode,
-      companyName: header?.SLONGNAME || header?.LongN || header?.CompanyName || "",
-      industry: header?.Industry || "",
-      sector: header?.Sector || "",
-      group: header?.Scrip_grp || header?.Group || "",
-      faceValue: header?.FaceValue || null,
-      isin: header?.ISIN || "",
-      marketCap: header?.Mktcap || null,
-      lastPrice: header?.CurrRate || header?.LTP || null,
-    }
+        // Parse response - BSE returns different formats
+        const header = data?.Header || data?.[0] || data
+        
+        // BSE sometimes returns an array or an object with slightly different keys
+        // We handle all common variations here
+        return {
+          scripCode,
+          symbol: header?.ScripName || header?.ShortN || header?.SLONGNAME || header?.Scrip_id || scripCode,
+          companyName: header?.LongN || header?.SLONGNAME || header?.CompanyName || header?.Issuer_Name || "",
+          industry: header?.Industry || header?.INDUSTRY || header?.Ind_name || "",
+          sector: header?.Sector || header?.SECTOR || "",
+          group: header?.Scrip_grp || header?.Group || header?.GROUP || "",
+          faceValue: parseFloat(header?.FaceValue || header?.FACE_VALUE || header?.Face_Value) || null,
+          isin: header?.ISIN || header?.Isin_no || header?.ISIN_NUMBER || "",
+          marketCap: header?.Mktcap || header?.MarketCap || header?.CUR_MKTCAP || null,
+          lastPrice: header?.CurrRate || header?.LTP || header?.CLOSE || header?.Curr_rate || null,
+        }
   } catch (e) {
     console.error(`[Company Info] Error:`, e)
     return null
@@ -196,7 +198,7 @@ async function lookupSymbol(scripCode: string) {
 }
 
 // Helper to get symbol from Python service
-async function getSymbolFromPythonService(scripCode: string): Promise<{symbol: string, name: string} | null> {
+async function getSymbolFromPythonService(scripCode: string): Promise<{ symbol: string; name: string; restricted?: boolean } | null> {
   try {
     const BSE_SERVICE_URL = process.env.BSE_SERVICE_URL || 'http://localhost:8080'
     const res = await fetch(`${BSE_SERVICE_URL}/api/quote/${scripCode}`, {
@@ -209,11 +211,12 @@ async function getSymbolFromPythonService(scripCode: string): Promise<{symbol: s
     if (!data.success || !data.data) return null
     
     // bsedata returns securityID which is the BSE symbol
-    const symbol = data.data.securityID || data.data.scripId || data.data.companyName?.split(' ')[0]
-    if (symbol && /^[A-Z0-9&-]+$/i.test(symbol)) {
+    const symbol = data.data.securityID || data.data.scripId || data.data.scrip_code || data.data.companyName?.split(' ')[0]
+    if (symbol) {
       return {
-        symbol: symbol.toUpperCase(),
-        name: data.data.companyName || `${symbol} Ltd`
+        symbol: symbol.toString().toUpperCase(),
+        name: data.data.companyName || `${symbol} Ltd`,
+        restricted: Boolean(data.restricted ?? data.data.restricted)
       }
     }
     return null

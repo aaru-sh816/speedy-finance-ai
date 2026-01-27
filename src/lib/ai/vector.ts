@@ -36,15 +36,34 @@ export function chunkPages(pages: { page: number; text: string }[], maxChars = 1
   for (const p of pages) {
     const text = (p.text || "").replace(/\s+/g, " ").trim()
     if (!text) continue
-    if (text.length <= maxChars) {
-      chunks.push({ id: `${p.page}-0`, page: p.page, text })
+    
+    // Page context prepended to each chunk
+    const pageContext = `[Page ${p.page}] `
+    const actualMaxChars = maxChars - pageContext.length
+
+    if (text.length <= actualMaxChars) {
+      chunks.push({ id: `${p.page}-0`, page: p.page, text: pageContext + text })
       continue
     }
-    let i = 0, part = 0
-    while (i < text.length) {
-      const slice = text.slice(i, i + maxChars)
-      chunks.push({ id: `${p.page}-${part++}`, page: p.page, text: slice })
-      i += maxChars
+
+    // Split by sentences if possible
+    const sentences = text.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g) || [text]
+    let currentChunk = ""
+    let part = 0
+
+    for (const sentence of sentences) {
+      if ((currentChunk + sentence).length > actualMaxChars) {
+        if (currentChunk) {
+          chunks.push({ id: `${p.page}-${part++}`, page: p.page, text: pageContext + currentChunk.trim() })
+        }
+        currentChunk = sentence
+      } else {
+        currentChunk += sentence
+      }
+    }
+
+    if (currentChunk) {
+      chunks.push({ id: `${p.page}-${part++}`, page: p.page, text: pageContext + currentChunk.trim() })
     }
   }
   return chunks
@@ -68,6 +87,18 @@ export async function ensureIndexed(docId: string, pages: { page: number; text: 
   const chunks = chunkPages(pages)
 
   if (index) {
+    // Check if already indexed by trying to fetch the first chunk
+    try {
+      const firstChunkId = `${docId}::${chunks[0]?.id}`
+      const existing = await index.fetch([firstChunkId])
+      if (existing && existing.length > 0 && existing[0]) {
+        console.log(`[Vector] Document ${docId} already indexed. Skipping.`)
+        return { chunks, embeddings: [] }
+      }
+    } catch (e) {
+      console.error(`[Vector] Error checking existence for ${docId}:`, e)
+    }
+
     // Upstash path
     const embeddings = await embedTexts(apiKey, chunks.map(c => c.text))
     const ups = [] as any[]
@@ -88,20 +119,54 @@ export async function ensureIndexed(docId: string, pages: { page: number; text: 
   return entry
 }
 
-export async function topK(docId: string, queryEmbedding: Embedding, k = 3): Promise<{ page: number; text: string; score: number }[]> {
+export async function topK(
+  docId: string, 
+  queryEmbedding: Embedding, 
+  k = 3, 
+  boostPage?: number,
+  options?: { threshold?: number; minResults?: number }
+): Promise<{ page: number; text: string; score: number }[]> {
+  const threshold = options?.threshold ?? 0.30
+  const minResults = options?.minResults ?? 1
+  
   const index = getUpstashIndex()
   if (index) {
     try {
-      const res = await index.query({ vector: queryEmbedding, topK: k, filter: { docId } })
+      const res = await index.query({ vector: queryEmbedding, topK: k * 2, filter: { docId } })
       const matches = (res?.matches || res?.vectors || res || []) as any[]
-      return matches.map((m: any) => ({ page: m?.metadata?.page ?? 1, text: m?.metadata?.text ?? "", score: m?.score ?? 0 }))
+      const scored = matches
+        .map((m: any) => {
+          let score = m?.score ?? 0
+          const page = m?.metadata?.page ?? 1
+          if (boostPage && page === boostPage) score += 0.15
+          return { page, text: m?.metadata?.text ?? "", score }
+        })
+        .sort((a, b) => b.score - a.score)
+      
+      const aboveThreshold = scored.filter(m => m.score >= threshold)
+      if (aboveThreshold.length >= minResults) {
+        return aboveThreshold.slice(0, k)
+      }
+      return scored.slice(0, Math.max(minResults, Math.min(k, scored.length)))
     } catch {
       // fall through to memory
     }
   }
+  
   const entry = mem.get(docId)
   if (!entry) return []
-  const scored = entry.embeddings.map((e, i) => ({ score: cosine(queryEmbedding, e), chunk: entry.chunks[i] }))
-  scored.sort((a, b) => b.score - a.score)
-  return scored.slice(0, k).map(s => ({ page: s.chunk.page, text: s.chunk.text, score: s.score }))
+  
+  const scored = entry.embeddings.map((e, i) => {
+    let score = cosine(queryEmbedding, e)
+    const page = entry.chunks[i].page
+    if (boostPage && page === boostPage) score += 0.15
+    return { score, chunk: entry.chunks[i] }
+  }).sort((a, b) => b.score - a.score)
+  
+  const aboveThreshold = scored.filter(s => s.score >= threshold)
+  const results = aboveThreshold.length >= minResults 
+    ? aboveThreshold.slice(0, k)
+    : scored.slice(0, Math.max(minResults, Math.min(k, scored.length)))
+    
+  return results.map(s => ({ page: s.chunk.page, text: s.chunk.text, score: s.score }))
 }

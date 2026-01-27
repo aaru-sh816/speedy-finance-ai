@@ -2,21 +2,20 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
-  import { 
-    Bell, BellRing, X, Check, CheckCheck, Trash2, 
-    TrendingUp, TrendingDown, Flame, Settings, UserPlus, Users
-  } from "lucide-react"
+import { 
+  Bell, BellRing, X, Check, CheckCheck, Trash2, 
+  TrendingUp, TrendingDown, Flame, Settings, UserPlus, Users
+} from "lucide-react"
+import { clsx } from "clsx"
 
 import {
   getAlerts, getUnreadAlertCount, markAlertRead, markAllAlertsRead, clearAlerts,
   type InvestorAlert
 } from "@/lib/bulk-deals/alertSystem"
 
-function clsx(...v: (string | false | undefined)[]) { 
-  return v.filter(Boolean).join(" ") 
-}
-
 function rupeeCompact(v: number) {
+
+
   if (v >= 1e7) return `₹${(v / 1e7).toFixed(2)}Cr`
   if (v >= 1e5) return `₹${(v / 1e5).toFixed(2)}L`
   return `₹${v.toLocaleString("en-IN")}`
