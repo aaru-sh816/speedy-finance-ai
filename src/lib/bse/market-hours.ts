@@ -52,3 +52,23 @@ export function getMarketStatus(): MarketStatus {
 export function isMarketOpen(): boolean {
   return getMarketStatus().isOpen;
 }
+
+/**
+ * Whether the given date's time (interpreted in IST) falls within BSE cash market hours: 09:15–15:30.
+ * Use for filtering announcements to "market hours only".
+ */
+export function isWithinMarketHoursIST(date: Date): boolean {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kolkata",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  })
+  const parts = formatter.formatToParts(date)
+  const hour = parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10)
+  const minute = parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10)
+  const totalMinutes = hour * 60 + minute
+  const startMinutes = 9 * 60 + 15
+  const endMinutes = 15 * 60 + 30
+  return totalMinutes >= startMinutes && totalMinutes <= endMinutes
+}

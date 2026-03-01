@@ -18,6 +18,7 @@ import io
 import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from collections import OrderedDict
+from requests.exceptions import ConnectionError as RequestsConnectionError, Timeout as RequestsTimeout, ReadTimeout
 from bulk_deals_database import BulkDealsDatabase, create_database_api
 
 logging.basicConfig(
@@ -229,13 +230,15 @@ def get_quote(scrip_code):
             return jsonify({'success': True, 'data': quote_data, 'cached': False})
         else:
             return jsonify({'success': False, 'error': 'No quote data available', 'scrip_code': scrip_code}), 404
+    except (RequestsConnectionError, RequestsTimeout, ReadTimeout) as e:
+        logger.warning(f"BSE connection timeout for quote {scrip_code}: {e}")
+        return jsonify({'success': False, 'error': 'BSE server temporarily unreachable. Please retry.', 'scrip_code': scrip_code}), 503
     except IndexError as e:
         logger.warning(f"Quote parsing error for {scrip_code}: BSE returned malformed data")
         return jsonify({'success': False, 'error': 'Quote data temporarily unavailable from BSE', 'scrip_code': scrip_code}), 503
     except AttributeError as e:
         error_msg = str(e)
         if "'NoneType'" in error_msg:
-            # Check if it was because of restriction even if caught as AttributeError
             if 'Restricted' in error_msg or 'GSSM' in error_msg or 'GSM' in error_msg:
                  return jsonify({
                     'success': True, 
@@ -255,6 +258,9 @@ def get_quote(scrip_code):
         return jsonify({'success': False, 'error': str(e)}), 400
     except Exception as e:
         error_msg = str(e)
+        if 'Max retries exceeded' in error_msg or 'timed out' in error_msg.lower() or 'ConnectTimeoutError' in error_msg:
+            logger.warning(f"BSE connection timeout for quote {scrip_code}: {e}")
+            return jsonify({'success': False, 'error': 'BSE server temporarily unreachable. Please retry.', 'scrip_code': scrip_code}), 503
         if 'list index out of range' in error_msg:
             logger.warning(f"Quote parsing error for {scrip_code}: BSE returned unexpected format")
             return jsonify({'success': False, 'error': 'Quote data temporarily unavailable from BSE', 'scrip_code': scrip_code}), 503
@@ -328,8 +334,15 @@ def extract_pdf():
         def fetch_and_parse(url):
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/pdf,*/*',
-                'Referer': 'https://www.bseindia.com/'
+                'Accept': 'application/pdf,application/octet-stream,*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Referer': 'https://www.bseindia.com/',
+                'Origin': 'https://www.bseindia.com',
+                'Connection': 'keep-alive',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'same-origin',
             }
             
             response = requests.get(url, headers=headers, timeout=30)
@@ -453,6 +466,9 @@ def get_company_details(scrip_code):
         
         quote_cache.set(cache_key, company_data)
         return jsonify({'success': True, 'data': company_data, 'cached': False})
+    except (RequestsConnectionError, RequestsTimeout, ReadTimeout) as e:
+        logger.warning(f"BSE connection timeout for company {scrip_code}: {e}")
+        return jsonify({'success': False, 'error': 'BSE server temporarily unreachable. Please retry.', 'scrip_code': scrip_code}), 503
     except IndexError as e:
         logger.warning(f"Company data parsing error for {scrip_code}: BSE returned malformed data")
         return jsonify({'success': False, 'error': 'Company data temporarily unavailable from BSE', 'scrip_code': scrip_code}), 503
@@ -476,6 +492,9 @@ def get_company_details(scrip_code):
         return jsonify({'success': False, 'error': str(e)}), 400
     except Exception as e:
         error_msg = str(e)
+        if 'Max retries exceeded' in error_msg or 'timed out' in error_msg.lower() or 'ConnectTimeoutError' in error_msg:
+            logger.warning(f"BSE connection timeout for company {scrip_code}: {e}")
+            return jsonify({'success': False, 'error': 'BSE server temporarily unreachable. Please retry.', 'scrip_code': scrip_code}), 503
         if 'list index out of range' in error_msg:
             logger.warning(f"Company data parsing error for {scrip_code}: BSE returned unexpected format")
             return jsonify({'success': False, 'error': 'Company data temporarily unavailable from BSE', 'scrip_code': scrip_code}), 503

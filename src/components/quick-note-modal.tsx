@@ -1,16 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { 
-  X, 
-  Save, 
-  TrendingUp, 
-  TrendingDown, 
-  Minus, 
-  Tag,
-  FileText
-} from 'lucide-react'
-import { addNote, type StockNote } from '@/lib/storage'
+import { X, TrendingUp, TrendingDown, Minus, Sparkles } from 'lucide-react'
+import { createNote, updateNote } from '@/lib/notes-storage'
+import type { Note } from '@/lib/notes-types'
 
 interface QuickNoteModalProps {
   isOpen: boolean
@@ -21,202 +14,151 @@ interface QuickNoteModalProps {
   currentPrice?: number
 }
 
-const SENTIMENT_CONFIG = {
-  bullish: { icon: TrendingUp, color: 'text-emerald-400', bg: 'bg-emerald-500/20', label: 'Bullish' },
-  bearish: { icon: TrendingDown, color: 'text-rose-400', bg: 'bg-rose-500/20', label: 'Bearish' },
-  neutral: { icon: Minus, color: 'text-zinc-400', bg: 'bg-zinc-500/20', label: 'Neutral' },
-}
-
 const QUICK_TAGS = ['earnings', 'technical', 'fundamental', 'news', 'breakout', 'target']
 
-export function QuickNoteModal({ isOpen, onClose, scripCode, symbol, companyName, currentPrice }: QuickNoteModalProps) {
-  const [title, setTitle] = useState('')
-  const [content, setContent] = useState('')
-  const [tags, setTags] = useState<string[]>([])
-  const [sentiment, setSentiment] = useState<StockNote['sentiment']>(undefined)
-  const [tagInput, setTagInput] = useState('')
+export function QuickNoteModal({
+  isOpen, onClose, scripCode, symbol, companyName, currentPrice
+}: QuickNoteModalProps) {
+  const [title, setTitle]         = useState('')
+  const [content, setContent]     = useState('')
+  const [tags, setTags]           = useState<string[]>([])
+  const [sentiment, setSentiment] = useState<Note['sentiment']>(undefined)
+  const [tagInput, setTagInput]   = useState('')
 
   useEffect(() => {
     if (isOpen) {
-      setTitle('')
-      setContent('')
-      setTags([])
-      setSentiment(undefined)
-      setTagInput('')
+      setTitle(''); setContent(''); setTags([]); setSentiment(undefined); setTagInput('')
     }
   }, [isOpen])
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose()
-      }
-      if (e.key === 'Enter' && e.ctrlKey && isOpen) {
-        handleSave()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, title, content, tags, sentiment])
-
   const handleSave = useCallback(() => {
     if (!title.trim() && !content.trim()) return
-
-    addNote({
-      scripCode,
-      symbol,
-      companyName,
-      title: title || 'Quick Note',
-      content,
-      tags,
-      sentiment,
-      priceAtNote: currentPrice,
-      isPinned: false,
-    })
-
+    const note = createNote('notes', title || 'Quick Note', content)
+    updateNote(note.id, { scripCode, symbol, companyName, tags, sentiment, priceAtCreation: currentPrice })
     onClose()
   }, [scripCode, symbol, companyName, title, content, tags, sentiment, currentPrice, onClose])
 
-  const handleAddTag = (tag: string) => {
-    const normalizedTag = tag.toLowerCase().trim().replace(/^#/, '')
-    if (normalizedTag && !tags.includes(normalizedTag)) {
-      setTags(prev => [...prev, normalizedTag])
+  useEffect(() => {
+    if (!isOpen) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') handleSave()
     }
-    setTagInput('')
-  }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isOpen, handleSave, onClose])
 
-  const handleRemoveTag = (tag: string) => {
-    setTags(prev => prev.filter(t => t !== tag))
+  const addTag = (raw: string) => {
+    const t = raw.toLowerCase().trim().replace(/^#/, '')
+    if (t && !tags.includes(t)) setTags(p => [...p, t])
+    setTagInput('')
   }
 
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center">
-      <div 
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-        onClick={onClose}
-      />
-      
-      <div className="relative w-full max-w-lg mx-4 bg-zinc-900 rounded-2xl border border-zinc-700 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-cyan-500/20">
-              <FileText className="h-5 w-5 text-cyan-400" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-white">Quick Note</h2>
-              <p className="text-sm text-zinc-500">{symbol} - {companyName}</p>
-            </div>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-xl" onClick={onClose} />
+
+      <div className="relative w-full max-w-md bg-zinc-950 rounded-2xl border border-white/[0.07] shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.05]">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-3.5 w-3.5 text-cyan-500" />
+            <span className="text-[11px] font-black text-white tracking-wide">Quick Note</span>
+            <span className="text-[10px] text-zinc-600">— {symbol}</span>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
-          >
-            <X className="h-5 w-5" />
+          <button onClick={onClose} className="p-1 text-zinc-700 hover:text-white transition-colors">
+            <X className="h-3.5 w-3.5" />
           </button>
         </div>
 
-        <div className="p-4 space-y-4">
+        <div className="p-4 space-y-3">
+          {/* Title */}
           <input
             type="text"
-            placeholder="Note title (optional)..."
+            placeholder="Title (optional)"
             value={title}
             onChange={e => setTitle(e.target.value)}
-            className="w-full bg-transparent text-white text-lg font-medium placeholder:text-zinc-600 outline-none"
             autoFocus
+            className="w-full bg-transparent text-[15px] font-bold text-white placeholder:text-zinc-700 outline-none"
           />
 
+          {/* Content */}
           <textarea
-            placeholder="Write your quick note... (Ctrl+Enter to save)"
+            placeholder="Write your note... (Ctrl+Enter to save)"
             value={content}
             onChange={e => setContent(e.target.value)}
-            className="w-full bg-zinc-800/50 rounded-xl p-3 text-zinc-300 placeholder:text-zinc-600 outline-none resize-none min-h-[120px] border border-zinc-700 focus:border-cyan-500/50 transition-colors"
+            rows={4}
+            className="w-full bg-white/[0.03] border border-white/[0.06] rounded-xl px-3 py-2.5 text-[12px] text-zinc-300 placeholder:text-zinc-700 outline-none resize-none focus:border-white/10 transition-colors font-mono"
           />
 
-          <div className="flex flex-wrap gap-2 items-center">
-            <Tag className="h-4 w-4 text-zinc-500" />
-            {tags.map(tag => (
-              <span
-                key={tag}
-                className="px-2 py-1 rounded-lg bg-cyan-500/20 text-cyan-400 text-xs font-medium flex items-center gap-1"
-              >
-                #{tag}
-                <button onClick={() => handleRemoveTag(tag)} className="hover:text-white">
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
-            ))}
-            <input
-              type="text"
-              placeholder="Add tag..."
-              value={tagInput}
-              onChange={e => setTagInput(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && tagInput.trim()) {
-                  e.preventDefault()
-                  handleAddTag(tagInput)
-                }
-              }}
-              className="bg-transparent text-sm text-zinc-400 placeholder:text-zinc-600 outline-none w-20"
-            />
-          </div>
-
-          <div className="flex flex-wrap gap-1">
-            {QUICK_TAGS.filter(t => !tags.includes(t)).map(tag => (
+          {/* Sentiment */}
+          <div className="flex items-center gap-1.5">
+            {([
+              { v: 'bullish', label: 'Bull', Icon: TrendingUp, on: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20', off: 'text-zinc-600 border-white/[0.05]' },
+              { v: 'bearish', label: 'Bear', Icon: TrendingDown, on: 'bg-rose-500/10 text-rose-400 border-rose-500/20', off: 'text-zinc-600 border-white/[0.05]' },
+              { v: 'neutral', label: 'Neutral', Icon: Minus, on: 'bg-zinc-700/30 text-zinc-400 border-zinc-600/30', off: 'text-zinc-600 border-white/[0.05]' },
+            ] as const).map(s => (
               <button
-                key={tag}
-                onClick={() => handleAddTag(tag)}
-                className="px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-500 text-xs hover:bg-zinc-700 hover:text-zinc-300 transition-colors"
+                key={s.v}
+                onClick={() => setSentiment(sentiment === s.v ? undefined : s.v)}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-bold border transition-all ${
+                  sentiment === s.v ? s.on : s.off
+                } hover:opacity-80`}
               >
-                #{tag}
+                <s.Icon className="h-2.5 w-2.5" /> {s.label}
               </button>
             ))}
+            {currentPrice && (
+              <span className="ml-auto text-[9px] text-zinc-700 tabular-nums">₹{currentPrice.toLocaleString('en-IN')}</span>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-zinc-500">Sentiment:</span>
-            {(['bullish', 'bearish', 'neutral'] as const).map(s => {
-              const config = SENTIMENT_CONFIG[s]
-              const Icon = config.icon
-              const isSelected = sentiment === s
-              return (
+          {/* Tags */}
+          <div>
+            <div className="flex flex-wrap gap-1 mb-1.5">
+              {tags.map(tag => (
+                <span key={tag} className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/[0.04] text-[9px] text-zinc-500">
+                  #{tag}
+                  <button onClick={() => setTags(p => p.filter(t => t !== tag))} className="text-zinc-700 hover:text-white"><X className="h-2 w-2" /></button>
+                </span>
+              ))}
+              {QUICK_TAGS.filter(t => !tags.includes(t)).map(tag => (
                 <button
-                  key={s}
-                  onClick={() => setSentiment(sentiment === s ? undefined : s)}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    isSelected 
-                      ? `${config.bg} ${config.color}` 
-                      : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'
-                  }`}
+                  key={tag}
+                  onClick={() => addTag(tag)}
+                  className="px-1.5 py-0.5 rounded bg-white/[0.025] border border-white/[0.04] text-[9px] text-zinc-700 hover:text-zinc-400 transition-colors"
                 >
-                  <Icon className="h-3 w-3" />
-                  {config.label}
+                  #{tag}
                 </button>
-              )
-            })}
-          </div>
-
-          {currentPrice && (
-            <div className="text-xs text-zinc-500">
-              Current price: ₹{currentPrice.toLocaleString('en-IN')}
+              ))}
             </div>
-          )}
+            <input
+              type="text"
+              placeholder="Custom tag…"
+              value={tagInput}
+              onChange={e => setTagInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && tagInput.trim()) { e.preventDefault(); addTag(tagInput) } }}
+              className="w-full bg-transparent text-[10px] text-zinc-500 placeholder:text-zinc-700 outline-none"
+            />
+          </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 p-4 border-t border-zinc-800">
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-white/[0.05]">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
+            className="px-3 py-1.5 rounded-lg text-[10px] font-bold text-zinc-600 hover:text-white hover:bg-white/[0.04] transition-all"
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
             disabled={!title.trim() && !content.trim()}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-500 text-white font-medium hover:bg-cyan-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-1.5 rounded-lg bg-cyan-500/80 hover:bg-cyan-400/80 text-white text-[10px] font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            <Save className="h-4 w-4" />
             Save Note
           </button>
         </div>

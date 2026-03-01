@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import fs from "fs/promises"
 import path from "path"
+import { getNseBulkDealsFromApi } from "@/lib/nse-bse/unified-market"
 
 export const dynamic = "force-dynamic"
 export const revalidate = 0
@@ -94,12 +95,43 @@ export async function GET(request: NextRequest) {
       endDate = tmp
     }
 
-    // Load database (cached)
-    const { deals, metadata } = await loadDatabase()
-    
     const startStr = formatDate(startDate)
     const endStr = formatDate(endDate)
-    
+
+    // Load database (cached)
+    let { deals, metadata } = await loadDatabase()
+
+    // When no BSE deals in DB, use NSE bulk deals from nse-bse-api so UI is never empty
+    if (deals.length === 0) {
+      try {
+        const nseDeals = await getNseBulkDealsFromApi(startDate, endDate)
+        deals = nseDeals.map((d: any) => {
+          const rawDate = d.date ?? d.Date ?? d.dealDate
+          const dateStr = rawDate
+            ? String(rawDate).replace(/(\d{2})-(\d{2})-(\d{4})/, "$3-$2-$1")
+            : startStr
+          return {
+          date: dateStr,
+          deal_date: rawDate,
+          scrip_code: d.symbol ?? d.Symbol ?? "",
+          scripCode: d.symbol ?? d.Symbol ?? "",
+          security_name: d.securityName ?? d.Symbol ?? d.symbol ?? "",
+          securityName: d.securityName ?? d.Symbol ?? d.symbol ?? "",
+          client_name: d.clientName ?? d.ClientName ?? "",
+          clientName: d.clientName ?? d.ClientName ?? "",
+          deal_type: (d.dealType ?? d.BuySell ?? "").toString().toLowerCase(),
+          dealType: d.dealType ?? d.BuySell,
+          quantity: Number(d.quantity ?? d.Quantity ?? 0),
+          price: Number(d.price ?? d.Price ?? d.averagePrice ?? 0),
+          exchange: "nse",
+        }
+        })
+        metadata = { date_range: `${startStr} to ${endStr}`, total_deals: deals.length, last_updated: new Date().toISOString() }
+      } catch (e) {
+        console.warn("[BulkDealsHistory] NSE fallback failed:", (e as Error)?.message)
+      }
+    }
+
     // Filter deals by date range, exchange, and company/person
     const filteredDeals = deals.filter((deal: any) => {
       const dealDate = deal.date || deal.deal_date || ""

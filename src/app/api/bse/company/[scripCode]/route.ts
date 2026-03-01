@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server"
 import { fetchCompanyAnnouncements } from "@/lib/bse/fetcher"
-import { generateMockAnnouncements } from "@/lib/bse/mockData"
+import { fetchBseCompanyHeader } from "@/lib/bse/company-header"
+import { buildLogoUrls } from "@/lib/logo-utils"
+import { SCRIP_TO_NSE_SYMBOL } from "@/lib/scrip-symbol-map"
+import { getBseAnnouncementsFromApi, getBseLookupFromApi, getBseListSecuritiesFromApi } from "@/lib/nse-bse/unified-market"
+import { normalizeBSEAnnouncement } from "@/lib/bse/types"
+import type { BSERawAnnouncement } from "@/lib/bse/types"
+import type { BSEAnnouncement } from "@/lib/bse/types"
 import { metrics } from "@/lib/infra/metrics"
 
 export const dynamic = "force-dynamic"
@@ -65,142 +71,32 @@ const SCRIP_TO_SYMBOL: Record<string, { symbol: string; name: string }> = {
     "543245": { symbol: "ANGELONE", name: "Angel One Ltd." },
   }
 
-// BSE API headers
-const HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0",
-  "Accept": "application/json, text/plain, */*",
-  "Accept-Language": "en-US,en;q=0.5",
-  "Origin": "https://www.bseindia.com",
-  "Referer": "https://www.bseindia.com",
-}
-
-/**
- * Fetch basic symbol/name via BSE ListofScripData API (most reliable for mapping)
- * Returns scrip_id which is the proper trading symbol for TradingView
- */
+/** Resolve scrip via nse-bse-api listSecurities (no direct BSE URL). */
 async function fetchScripFromList(scripCode: string) {
-  try {
-    const url = `https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w?scripcode=${scripCode}&segment=Equity&status=Active`
-    const res = await fetch(url, { method: "GET", headers: HEADERS, cache: "no-store" })
-    if (!res.ok) return null
-    const data = await res.json()
-    if (!Array.isArray(data) || data.length === 0) return null
-    const item = data[0]
-    // scrip_id is the BSE trading symbol (e.g., "BALUFORGE", "RELIANCE")
-    const symbol = item?.scrip_id as string | undefined
-    return {
-      symbol: symbol,
-      // Validate symbol is alphabetic (TradingView compatible)
-      tradingViewSymbol: symbol && /^[A-Z0-9&-]+$/i.test(symbol) ? symbol.toUpperCase() : null,
-      companyName: (item?.Scrip_Name as string | undefined) || (item?.Issuer_Name as string | undefined),
-      isin: item?.ISIN_NUMBER as string | undefined,
-      group: item?.GROUP as string | undefined,
-    }
-  } catch {
-    return null
+  const rows = await getBseListSecuritiesFromApi({ scripcode: scripCode, segment: "Equity", status: "Active" })
+  const first = rows[0]
+  if (!first) return null
+  const symbol = first.symbol || first.scripcode
+  return {
+    symbol,
+    tradingViewSymbol: symbol && /^[A-Z0-9&-]+$/i.test(symbol) ? symbol.toUpperCase() : null,
+    companyName: first.companyname || "",
+    isin: first.isin || "",
+    group: first.group,
   }
 }
 
-// Fetch company info from BSE
-async function fetchCompanyInfo(scripCode: string) {
-  try {
-    // BSE API for company header info
-    const url = `https://api.bseindia.com/BseIndiaAPI/api/ComHeadernew/w?scripcode=${scripCode}`
-    
-    // console.log(`[Company Info] Fetching info for scripCode: ${scripCode}`)
-    
-    const response = await fetch(url, {
-      method: "GET",
-      headers: HEADERS,
-      cache: "no-store",
-      signal: AbortSignal.timeout(5000),
-    })
-    
-    if (!response.ok) {
-      // console.debug(`[Company Info] API error: ${response.status}`)
-      return null
-    }
-    
-    // Check content type to avoid parsing HTML as JSON
-    const contentType = response.headers.get('content-type') || ''
-    if (!contentType.includes('application/json')) {
-      // console.debug(`[Company Info] Non-JSON response (${contentType}), skipping BSE API`)
-      return null
-    }
-    
-    // Get text first to check if it's valid JSON
-    const text = await response.text()
-    if (text.startsWith('<') || text.startsWith('<!')) {
-      // console.debug(`[Company Info] Got HTML instead of JSON, BSE may be blocking`)
-      return null
-    }
-    
-    let data
-    try {
-      data = JSON.parse(text)
-    } catch {
-      // console.debug(`[Company Info] Invalid JSON response`)
-      return null
-    }
-    
-    // console.log(`[Company Info] Response:`, JSON.stringify(data).substring(0, 300))
-    
-        // Parse response - BSE returns different formats
-        const header = data?.Header || data?.[0] || data
-        
-        // BSE sometimes returns an array or an object with slightly different keys
-        // We handle all common variations here
-        return {
-          scripCode,
-          symbol: header?.ScripName || header?.ShortN || header?.SLONGNAME || header?.Scrip_id || scripCode,
-          companyName: header?.LongN || header?.SLONGNAME || header?.CompanyName || header?.Issuer_Name || "",
-          industry: header?.Industry || header?.INDUSTRY || header?.Ind_name || "",
-          sector: header?.Sector || header?.SECTOR || "",
-          group: header?.Scrip_grp || header?.Group || header?.GROUP || "",
-          faceValue: parseFloat(header?.FaceValue || header?.FACE_VALUE || header?.Face_Value) || null,
-          isin: header?.ISIN || header?.Isin_no || header?.ISIN_NUMBER || "",
-          marketCap: header?.Mktcap || header?.MarketCap || header?.CUR_MKTCAP || null,
-          lastPrice: header?.CurrRate || header?.LTP || header?.CLOSE || header?.Curr_rate || null,
-        }
-  } catch (e) {
-    console.error(`[Company Info] Error:`, e)
-    return null
-  }
-}
-
-// Alternative: Get symbol from scrip code using lookup
-async function lookupSymbol(scripCode: string) {
-  try {
-    const url = `https://api.bseindia.com/BseIndiaAPI/api/PeerSmartSearch/w?Type=SS&text=${scripCode}`
-    
-    const response = await fetch(url, {
-      method: "GET",
-      headers: HEADERS,
-      cache: "no-store",
-    })
-    
-    if (!response.ok) return null
-    
-    const html = await response.text()
-    
-    // Extract symbol from HTML
-    // Pattern: <strong>SYMBOL</strong>
-    const match = html.match(/<strong>([A-Z0-9&-]+)<\/strong>/)
-    if (match) {
-      return match[1]
-    }
-    
-    return null
-  } catch (e) {
-    console.error(`[Lookup] Error:`, e)
-    return null
-  }
+/** Resolve symbol via nse-bse-api lookup (no direct BSE URL). */
+async function lookupSymbol(scripCode: string): Promise<string | null> {
+  const row = await getBseLookupFromApi(scripCode)
+  const sym = row?.symbol ? String(row.symbol).toUpperCase() : null
+  return sym && /^[A-Z0-9&-]+$/i.test(sym) ? sym : null
 }
 
 // Helper to get symbol from Python service
 async function getSymbolFromPythonService(scripCode: string): Promise<{ symbol: string; name: string; restricted?: boolean } | null> {
   try {
-    const BSE_SERVICE_URL = process.env.BSE_SERVICE_URL || 'http://localhost:8080'
+    const BSE_SERVICE_URL = process.env.BSE_SERVICE_URL || 'http://localhost:5000'
     const res = await fetch(`${BSE_SERVICE_URL}/api/quote/${scripCode}`, {
       method: "GET",
       cache: "no-store",
@@ -241,11 +137,17 @@ export async function GET(
   }
 
   try {
+    // Company header: only direct BSE call (ComHeadernew), via company-header.ts
+    let companyInfo = await fetchBseCompanyHeader(scripCode)
+
     // First check our known mapping (most reliable for TradingView)
-    const knownStock = SCRIP_TO_SYMBOL[scripCode]
-    
-    // Fetch company info from BSE API
-    let companyInfo = await fetchCompanyInfo(scripCode)
+    let knownStock = SCRIP_TO_SYMBOL[scripCode]
+    if (!knownStock && SCRIP_TO_NSE_SYMBOL[scripCode]) {
+      knownStock = {
+        symbol: SCRIP_TO_NSE_SYMBOL[scripCode],
+        name: companyInfo?.companyName || `Company ${scripCode}`,
+      }
+    }
     let tradingViewSymbol: string | null = null
     
     // Use known mapping if available (overrides BSE API for reliability)
@@ -340,10 +242,16 @@ export async function GET(
       tradingViewSymbol = null
     }
     
-    // Add tradingViewSymbol to companyInfo for response
+    // Add tradingViewSymbol and logo URLs to companyInfo for response
+    const { logoUrl, logoUrlFallback } = buildLogoUrls(
+      companyInfo.symbol || scripCode,
+      companyInfo.isin
+    )
     const responseInfo = {
       ...companyInfo,
       tradingViewSymbol, // null if not compatible, string if valid
+      logoUrl,
+      logoUrlFallback,
     }
     
     console.log(`[Company] Final info for ${scripCode}: symbol=${companyInfo.symbol}, tvSymbol=${tradingViewSymbol}, name=${companyInfo.companyName}`)
@@ -353,22 +261,20 @@ export async function GET(
       return NextResponse.json(responseInfo)
     }
 
-    // Fetch announcements
+    // Fetch announcements (real data only)
     let announcements = await fetchCompanyAnnouncements(scripCode, days)
 
-    // Fallback to filtered mock data if no results
     if (announcements.length === 0) {
-      const mockData = generateMockAnnouncements()
-      announcements = mockData.filter(a => a.scripCode === scripCode).slice(0, 10)
-      
-      // If no mock data for this specific scripCode, return recent mock data
-      if (announcements.length === 0) {
-        announcements = mockData.slice(0, 5).map(a => ({
-          ...a, 
-          scripCode,
-          company: companyInfo.companyName,
-          ticker: companyInfo.symbol
-        }))
+      const raw = await getBseAnnouncementsFromApi({
+        fromDate: new Date(Date.now() - days * 24 * 60 * 60 * 1000),
+        toDate: new Date(),
+        pageNo: 1,
+        scripcode: scripCode,
+      })
+      const table = raw && typeof raw === "object" && "Table" in raw && Array.isArray((raw as { Table?: unknown[] }).Table) ? (raw as { Table: BSERawAnnouncement[] }).Table : null
+      if (table?.length) {
+        const fromApi = table.map((row) => normalizeBSEAnnouncement(row)) as BSEAnnouncement[]
+        announcements = fromApi.filter((a) => a.scripCode === scripCode)
       }
     }
 
@@ -384,23 +290,49 @@ export async function GET(
   } catch (e: any) {
     metrics().recordError("BSECompanyAPIError")
     console.error("BSE company API error:", e)
-    
-    // Return mock data on error
-    const mockData = generateMockAnnouncements()
-    const announcements = mockData.slice(0, 5)
+
+    try {
+      const raw = await getBseAnnouncementsFromApi({
+        fromDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        toDate: new Date(),
+        pageNo: 1,
+        scripcode: scripCode,
+      })
+      const table = raw && typeof raw === "object" && "Table" in raw && Array.isArray((raw as { Table?: unknown[] }).Table) ? (raw as { Table: BSERawAnnouncement[] }).Table : null
+      if (table?.length) {
+        const fromApi = table.map((row) => normalizeBSEAnnouncement(row)) as BSEAnnouncement[]
+        const announcements = fromApi.filter((a) => a.scripCode === scripCode)
+        const companyInfo = SCRIP_TO_SYMBOL[scripCode] ?? { symbol: scripCode, name: `Scrip ${scripCode}` }
+        return NextResponse.json({
+          scripCode,
+          symbol: companyInfo.symbol,
+          companyName: companyInfo.name,
+          announcements,
+          meta: {
+            count: announcements.length,
+            days,
+            fetchedAt: new Date().toISOString(),
+            source: "nse-bse-api",
+            error: e?.message,
+          },
+        })
+      }
+    } catch (_) {
+      // ignore
+    }
 
     return NextResponse.json({
       scripCode,
       symbol: scripCode,
       companyName: `Company ${scripCode}`,
-      announcements,
+      announcements: [],
       meta: {
-        count: announcements.length,
+        count: 0,
         days,
         fetchedAt: new Date().toISOString(),
-        source: "mock",
+        source: "bse",
         error: e?.message,
       },
-    })
+    }, { status: 500 })
   }
 }

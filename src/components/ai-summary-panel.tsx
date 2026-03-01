@@ -17,7 +17,7 @@ import { getMarketStatus } from "@/lib/bse/market-hours"
 import { 
   RefreshCw, FileText, Sparkles, CheckCircle, XCircle, Loader2, Maximize2, 
   TrendingUp, TrendingDown, Zap, HelpCircle, ChevronUp, ChevronDown,
-  BarChart2, Share2
+  BarChart2, Share2, PenSquare
 } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 import { MarketDepth } from "./market-depth"
@@ -56,6 +56,7 @@ interface AISummaryPanelProps {
   impact?: BSEImpact
   onFullScreenChat?: () => void
   quote?: Quote
+  onNoteAction?: (context: { title: string; content: string; type: "note" | "ai" }) => void
 }
 
 type AnalysisStatus = "idle" | "fetching_pdf" | "analyzing" | "complete" | "failed"
@@ -91,16 +92,17 @@ export function AISummaryPanel({
   subCategory,
   announcementId,
   pdfUrl,
-  onVerdictGenerated,
-  time,
-  ticker,
-  scripCode,
-  company,
-  impact,
-  onFullScreenChat,
-  quote,
-}: AISummaryPanelProps) {
-  const [aiSummary, setAiSummary] = useState<AISummary | null>(null)
+    onVerdictGenerated,
+    time,
+    ticker,
+    scripCode,
+    company,
+    impact,
+    onFullScreenChat,
+    quote,
+    onNoteAction,
+  }: AISummaryPanelProps) {
+    const [aiSummary, setAiSummary] = useState<AISummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [pdfUsed, setPdfUsed] = useState(false)
@@ -113,10 +115,22 @@ export function AISummaryPanel({
   const [realDepth, setRealDepth] = useState<any>(null)
   const [isMarketOpen, setIsMarketOpen] = useState(true)
   const [depthFetchFailed, setDepthFetchFailed] = useState(false)
-  const [marketDepthUserExpanded, setMarketDepthUserExpanded] = useState(false)
-  const streamRef = useRef<EventSource | null>(null)
+    const [marketDepthUserExpanded, setMarketDepthUserExpanded] = useState(false)
+    const streamRef = useRef<EventSource | null>(null)
 
-  // Check market hours
+    const handleResearch = () => {
+      if (!aiSummary || !onNoteAction) return
+      onNoteAction({
+        title: `AI Analysis: ${ticker || company}`,
+        content: `### AI Verdict: ${getVerdictLabel(aiSummary.verdict.type)} (${aiSummary.verdict.confidence}%)\n\n` +
+          `#### Summary\n${aiSummary.simpleSummary.replace(/<[^>]*>?/gm, '')}\n\n` +
+          `#### Key Insights\n${aiSummary.keyInsights.map(i => "- " + i).join("\n")}\n\n` +
+          `#### Risk Factors\n${(aiSummary.riskFactors || []).map(r => "- " + r).join("\n")}`,
+        type: "ai"
+      })
+    }
+
+    // Check market hours
   useEffect(() => {
     const checkMarketHours = () => {
       const status = getMarketStatus();
@@ -255,19 +269,23 @@ export function AISummaryPanel({
     setAnalysisStatus(pdfUrl ? "fetching_pdf" : "analyzing")
     
     try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 60000) // 60s timeout
       const response = await fetch("/api/ai/summary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          headline,
-          summary,
-          category,
-          subCategory,
-          pdfUrl,
-          announcementId,
-          forceRefresh,
-        }),
-      })
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            headline,
+            summary,
+            category,
+            subCategory,
+            pdfUrl,
+            announcementId,
+            forceRefresh,
+          }),
+          signal: controller.signal,
+        })
+      clearTimeout(timeoutId)
 
       if (response.ok) {
         const enhanced = await response.json()
@@ -292,8 +310,12 @@ export function AISummaryPanel({
       } else {
         setAnalysisStatus("failed")
       }
-    } catch (e) {
-      console.error("Summary generation failed:", e)
+    } catch (e: any) {
+      if (e?.name === 'AbortError') {
+        console.warn("Summary generation timed out after 60s")
+      } else {
+        console.error("Summary generation failed:", e?.message || e)
+      }
       setAnalysisStatus("failed")
     } finally {
       setLoading(false)
@@ -319,6 +341,31 @@ export function AISummaryPanel({
     if (!aiSummary) return
     const text = encodeURIComponent(`*Speedy AI Summary - ${ticker || company}*\n\n*Verdict:* ${getVerdictLabel(aiSummary.verdict.type)}\n\n${headline}\n\nRead more on Speedy Finance AI`)
     window.open(`https://wa.me/?text=${text}`, '_blank')
+  }
+
+  // Show error state when API failed instead of silently returning null
+  if (!loading && analysisStatus === "failed" && !aiSummary) {
+    return (
+      <div className="glass-card rounded-2xl p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center">
+            <XCircle className="h-6 w-6 text-rose-400" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-white">Summary unavailable</h3>
+            <p className="text-xs text-zinc-500">The AI analysis failed. Check your connection and try again.</p>
+          </div>
+        </div>
+        <button
+          onClick={handleReanalyze}
+          disabled={isReanalyzing}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-sm text-zinc-300 hover:text-white transition-all disabled:opacity-50"
+        >
+          <RefreshCw className={`h-4 w-4 ${isReanalyzing ? "animate-spin" : ""}`} />
+          {isReanalyzing ? "Retrying..." : "Retry"}
+        </button>
+      </div>
+    )
   }
 
   if (loading) {
@@ -451,6 +498,18 @@ export function AISummaryPanel({
             <RefreshCw className={`h-3 w-3 ${isReanalyzing ? "animate-spin" : ""}`} />
             <span className="hidden sm:inline">{isReanalyzing ? "Analyzing..." : "Re-analyze"}</span>
           </button>
+
+          {/* Research Note Button */}
+          {onNoteAction && (
+            <button
+              onClick={handleResearch}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 text-[10px] font-medium text-cyan-400 transition-all"
+              title="Copy analysis to Research Note"
+            >
+              <PenSquare className="h-3 w-3" />
+              <span>Research</span>
+            </button>
+          )}
 
           {/* Copy Summary Button */}
           <button

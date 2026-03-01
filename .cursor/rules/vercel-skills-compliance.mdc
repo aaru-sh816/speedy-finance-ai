@@ -1,0 +1,26 @@
+---
+description: Enforce vercel-labs agent skills (performance, composition, bundle)
+alwaysApply: true
+---
+
+# Vercel Skills Compliance
+
+This project uses vercel-labs/agent-skills. Follow these rules on every edit:
+
+## Performance (vercel-react-best-practices)
+
+- Use `Promise.all([...])` for independent async calls; never sequential await when parallel is possible
+- Use `.toSorted()` or `[...arr].sort()` instead of mutating `.sort()` on state/props
+- Prefer `useState(() => expensiveInit())` for lazy state init
+- Use functional setState when next state depends on previous: `setCount(c => c + 1)`
+- Use SWR for client data fetching (not raw fetch when dedup is needed)
+
+## Composition (vercel-composition-patterns)
+
+- Prefer composition over boolean props (e.g. `isLoading`, `isError`)
+- Use compound components and children; avoid render props when composition works
+- React 19: use `use()` for context; ref as normal prop instead of forwardRef
+
+## Bundle
+
+- lucide-react and @radix-ui/* are in `optimizePackageImports`; no barrel-import workarounds needed

@@ -8,15 +8,16 @@ import {
   Search, Filter, Download, Volume2, VolumeX, RefreshCw, TrendingUp, TrendingDown, 
     FileText, Sparkles, X, ExternalLink, ChevronRight, Globe, AlertTriangle, Zap, ZapOff,
     Calendar, BarChart2, Share2, Bookmark, ChevronDown, MessageSquare, Clock, ArrowLeft, ChevronLeft,
-    EyeOff, Eye
+    EyeOff, Eye, PenSquare
   } from "lucide-react"
 import type { BSEAnnouncement, BSEImpact } from "@/lib/bse/types"
+import { ResearchNoteOverlay, type ResearchNoteContext } from "@/components/research-note-overlay"
 import { AISummaryPanel, VerdictBadge } from "@/components/ai-summary-panel"
 import { TradingViewChart } from "@/components/trading-view-chart"
 import { LightweightChart } from "@/components/lightweight-chart"
 import { useWhaleDeals } from "@/hooks/useWhaleDeals"
 import { type VerdictType, type AISummary, analyzeAnnouncement, getVerdictColor, getVerdictIcon, shouldExcludeAnnouncement } from "@/lib/ai/verdict"
-import { getMarketStatus } from "@/lib/bse/market-hours"
+import { getMarketStatus, isWithinMarketHoursIST } from "@/lib/bse/market-hours"
 import { FilterModal, FilterState, getDefaultFilters, McapRange, SortBy } from "@/components/filter-modal"
 import { StockTicker, type TickerStock } from "@/components/stock-ticker"
 import { SearchModal } from "@/components/search-modal"
@@ -25,6 +26,8 @@ import { DigitalClock } from "@/components/digital-clock"
 import { ShareMenu } from "@/components/share-menu"
 import { SentimentBadge, RiskAlert, analyzeSentiment } from "@/components/sentiment-badge"
 import { clsx } from "clsx"
+import { fetchWithTimeout } from "@/lib/fetch-with-timeout"
+import { OnboardingHint } from "@/components/onboarding-hint"
 
 function timeAgo(iso: string) {
   const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
@@ -187,11 +190,18 @@ export default function AnnouncementsPage() {
     // Verdicts & local summary cache for filtered items
   const verdictsCache = useRef<Map<string, VerdictType>>(new Map())
   const summaryCache = useRef<Map<string, AISummary>>(new Map())
+  const announcementsRef = useRef<BSEAnnouncement[]>([])
   
   // Quote state
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
   const [priceAtAnnouncement, setPriceAtAnnouncement] = useState<number | null>(null)
+
+  // Batch quote cache for all announcements (scripCode -> quote data) — must be before researchContext
+  const [quotesCache, setQuotesCache] = useState<Map<string, { price: number; changePercent: number; marketCap: number | null }>>(new Map())
+  const [quotesLoading, setQuotesLoading] = useState(false)
+  const batchFetchedRef = useRef<Set<string>>(new Set())
+  const initialBatchFetchDone = useRef(false)
   
     // Cache for prices captured at announcement time (persisted in localStorage)
     const announcementPricesRef = useRef<Map<string, number>>(new Map())
@@ -241,6 +251,23 @@ export default function AnnouncementsPage() {
 
     // Whale Deals for the selected company
     const { deals: whaleDeals } = useWhaleDeals(selected?.scripCode)
+
+    // Research note overlay
+    const [researchOverlayOpen, setResearchOverlayOpen] = useState(false)
+    const researchContext: ResearchNoteContext | undefined = selected ? {
+      scripCode: String(selected.scripCode),
+      symbol: selected.ticker,
+      companyName: selected.company,
+      currentPrice: quote?.price ?? quotesCache.get(String(selected.scripCode))?.price ?? undefined,
+      changePercent: quote?.changePercent ?? quotesCache.get(String(selected.scripCode))?.changePercent ?? undefined,
+      announcement: {
+        id: selected.id,
+        headline: selected.headline,
+        date: selected.time,
+        category: selected.category,
+        pdfUrl: selected.pdfUrl ?? undefined,
+      },
+    } : undefined
     
     // TTS state
   const [enableTTS, setEnableTTS] = useState(false)
@@ -256,14 +283,6 @@ export default function AnnouncementsPage() {
   // Bookmarks & History state
   const [bookmarks, setBookmarks] = useState<Set<string>>(new Set())
   const [history, setHistory] = useState<string[]>([])
-
-  // Batch quote cache for all announcements (scripCode -> quote data)
-  const [quotesCache, setQuotesCache] = useState<Map<string, { price: number; changePercent: number; marketCap: number | null }>>(new Map())
-  const [quotesLoading, setQuotesLoading] = useState(false)
-  const batchFetchedRef = useRef<Set<string>>(new Set())
-  
-  // Track if initial batch fetch has been done for this session
-  const initialBatchFetchDone = useRef(false)
 
   // Bulk Quote Fetcher - fetches quotes in batches of 100 (API limit)
   const fetchBulkQuotesFromAPI = useCallback(async (scripCodes: string[], retryCount = 0): Promise<void> => {
@@ -336,21 +355,24 @@ export default function AnnouncementsPage() {
     }
   }, [])
 
-  // Batch fetch quotes for all unique scripCodes in announcements
+  // Batch fetch quotes for all unique scripCodes in announcements.
+  // Option A: On first load always run; when market is closed, still fetch when there are new (unfetched) scrip codes so filters work.
   const fetchBatchQuotes = useCallback(async (scripCodes: string[], forceRefresh: boolean = false) => {
-    const marketStatus = getMarketStatus()
-    
-    if (!marketStatus.isOpen && !forceRefresh && initialBatchFetchDone.current) {
-      console.log('[Quotes] Market closed, using cached quotes. Skip batch fetch.')
-      return
-    }
-    
-    const unfetched = forceRefresh 
-      ? scripCodes 
-      : scripCodes.filter(code => !batchFetchedRef.current.has(code))
-    
+    const unfetched = forceRefresh
+      ? scripCodes
+      : scripCodes.filter((code) => !batchFetchedRef.current.has(code))
     if (unfetched.length === 0) return
-    
+
+    const marketStatus = getMarketStatus()
+    // When market is closed and not force refresh, skip only if we already have quotes for all (avoid redundant refetch).
+    if (!marketStatus.isOpen && !forceRefresh && initialBatchFetchDone.current) {
+      const allFetched = scripCodes.every((code) => batchFetchedRef.current.has(code))
+      if (allFetched) {
+        console.log('[Quotes] Market closed, using cached quotes. Skip batch fetch.')
+        return
+      }
+    }
+
     await fetchBulkQuotesFromAPI(unfetched)
     initialBatchFetchDone.current = true
   }, [fetchBulkQuotesFromAPI])
@@ -479,27 +501,112 @@ export default function AnnouncementsPage() {
     }
   }, [])
 
-  // Fetch announcements
-  const fetchAnnouncements = useCallback(async () => {
+  // Fetch announcements (optional signal for abort on navigation).
+  // Fetches BSE + FinEdge corp-announcements, merges, deduplicates by symbol+date, shows source badge.
+  const fetchAnnouncements = useCallback(async (signal?: AbortSignal) => {
     try {
       setLoading(true)
       setError(null)
-      
+      const now = new Date()
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
+      const yesterday = new Date(now)
+      yesterday.setDate(yesterday.getDate() - 1)
+      const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, "0")}-${String(yesterday.getDate()).padStart(2, "0")}`
+      const toDateIsToday = filters.toDate === todayStr
+      const fromDateBeforeToday = filters.fromDate < todayStr
+      const existing = announcementsRef.current
+      const existingToday = toDateIsToday && fromDateBeforeToday
+        ? existing.filter((a) => (a.time ? new Date(a.time).toISOString().slice(0, 10) : "") === todayStr)
+        : []
+      const useOptimization = toDateIsToday && fromDateBeforeToday && existingToday.length > 0
+
       const queryParams = new URLSearchParams()
-      queryParams.set("maxPages", "30") // Increased for "all possible past announcements"
+      queryParams.set("maxPages", "30")
       if (filters.fromDate) queryParams.set("fromDate", filters.fromDate)
-      if (filters.toDate) queryParams.set("toDate", filters.toDate)
-      
-      const res = await fetch(`/api/bse/announcements?${queryParams.toString()}`, { cache: "no-store" })
-      if (!res.ok) throw new Error("Failed to fetch")
-      const data = await res.json()
-      setAnnouncements(data.announcements || [])
-      // Auto-select first if none selected
-      if (!selectedId && data.announcements?.length > 0) {
-        setSelectedId(data.announcements[0].id)
+      if (useOptimization) {
+        queryParams.set("toDate", yesterdayStr)
+      } else if (filters.toDate) {
+        queryParams.set("toDate", filters.toDate)
       }
-    } catch (e: any) {
-      setError(e.message || "Failed to load announcements")
+      const toDateParam = useOptimization ? yesterdayStr : (filters.toDate || todayStr)
+
+      // Fetch BSE and FinEdge corp-announcements in parallel
+      const [bseRes, finedgeRes] = await Promise.all([
+        fetchWithTimeout(`/api/bse/announcements?${queryParams.toString()}`, {
+          cache: "no-store",
+          timeoutMs: 20000,
+          signal,
+        }),
+        fetchWithTimeout(`/api/finedge/corp-announcements?from_date=${filters.fromDate || ""}&to_date=${toDateParam}`, {
+          cache: "no-store",
+          timeoutMs: 15000,
+          signal,
+        }).catch(() => null),
+      ])
+
+      if (!bseRes.ok) throw new Error("Failed to fetch BSE announcements")
+      const data = await bseRes.json()
+      let fromApi: BSEAnnouncement[] = data.announcements || []
+
+      // Convert FinEdge corp-announcements to BSEAnnouncement shape and merge
+      if (finedgeRes?.ok) {
+        const feData = await finedgeRes.json()
+        const feList = Array.isArray(feData) ? feData : []
+        const finedgeItems: BSEAnnouncement[] = feList.map((x: { ex_date?: string; stock_symbol?: string; description?: string; category?: string; sub_category?: string; bse_code?: string; timestamp_unix?: number; pdf_file_link?: string }) => {
+          const scripCode = x.bse_code || x.stock_symbol || ""
+          const dateStr = x.ex_date || (x.timestamp_unix ? new Date(x.timestamp_unix * 1000).toISOString().slice(0, 10) : "")
+          const time = x.ex_date ? new Date(x.ex_date + "T12:00:00Z").toISOString() : (x.timestamp_unix ? new Date(x.timestamp_unix * 1000).toISOString() : new Date().toISOString())
+          const headline = x.description || x.category || "Corporate announcement"
+          const cat = x.category || "General"
+          const impact = /dividend|bonus|split|rights|buyback/i.test(cat) ? "high" as const : /board|agm|egm/i.test(cat) ? "medium" as const : "low" as const
+          return {
+            id: `fe_${x.stock_symbol || "x"}_${dateStr}_${x.timestamp_unix || Date.now()}`,
+            ticker: (x.stock_symbol || "").toUpperCase(),
+            scripCode,
+            company: x.stock_symbol || "",
+            headline,
+            summary: x.description || headline,
+            category: cat,
+            subCategory: x.sub_category || "",
+            impact,
+            time,
+            pdfUrl: x.pdf_file_link || null,
+            source: "FinEdge",
+            tags: [cat.toLowerCase().replace(/\s+/g, "-")],
+            isCritical: false,
+          }
+        })
+        const seen = new Set<string>()
+        fromApi.forEach((a) => seen.add(`${a.scripCode}_${(a.time || "").slice(0, 10)}`))
+        finedgeItems.forEach((a) => {
+          const key = `${a.scripCode}_${(a.time || "").slice(0, 10)}`
+          if (!seen.has(key)) {
+            seen.add(key)
+            fromApi.push(a)
+          }
+        })
+      }
+
+      if (useOptimization) {
+        const merged = [...fromApi, ...existingToday].sort((a, b) => {
+          const ta = a.time ? new Date(a.time).getTime() : 0
+          const tb = b.time ? new Date(b.time).getTime() : 0
+          return tb - ta
+        })
+        setAnnouncements(merged)
+        if (!selectedId && merged.length > 0) setSelectedId(merged[0].id)
+      } else {
+        fromApi.sort((a, b) => {
+          const ta = a.time ? new Date(a.time).getTime() : 0
+          const tb = b.time ? new Date(b.time).getTime() : 0
+          return tb - ta
+        })
+        setAnnouncements(fromApi)
+        if (!selectedId && fromApi.length > 0) setSelectedId(fromApi[0].id)
+      }
+    } catch (e: unknown) {
+      if ((e as Error)?.name === "AbortError") return
+      setError((e as Error)?.message || "Failed to load announcements")
     } finally {
       setLoading(false)
     }
@@ -518,15 +625,16 @@ export default function AnnouncementsPage() {
     } catch {}
   }, [])
 
-  // Initial fetch
   useEffect(() => {
-    fetchAnnouncements()
-  }, [])
+    announcementsRef.current = announcements
+  }, [announcements])
 
-  // Refetch when dates change
+  // Initial fetch and refetch when dates change; abort on unmount or when deps change
   useEffect(() => {
-    fetchAnnouncements()
-  }, [filters.fromDate, filters.toDate])
+    const ctrl = new AbortController()
+    fetchAnnouncements(ctrl.signal)
+    return () => ctrl.abort()
+  }, [fetchAnnouncements])
 
 // Auto-refresh - Real-time updates every 30 seconds
     useEffect(() => {
@@ -538,16 +646,11 @@ export default function AnnouncementsPage() {
     }
   }, [autoRefresh, fetchAnnouncements])
 
-  // Trigger batch quote fetch when announcements change
+  // Trigger batch quote fetch when announcements change (so every result can have mcap/price/change for filters).
   useEffect(() => {
     if (announcements.length === 0) return
-    
-    const uniqueScripCodes = [...new Set(announcements.map(a => a.scripCode))]
-    const marketStatus = getMarketStatus()
-    
-    if (!initialBatchFetchDone.current || marketStatus.isOpen) {
-      fetchBatchQuotes(uniqueScripCodes)
-    }
+    const uniqueScripCodes = [...new Set(announcements.map((a) => a.scripCode))]
+    fetchBatchQuotes(uniqueScripCodes)
   }, [announcements, fetchBatchQuotes])
 
 
@@ -587,7 +690,10 @@ export default function AnnouncementsPage() {
   const fetchCurrentQuote = useCallback(async (scripCode: string, announcementId: string, announcementTime: string) => {
     setQuoteLoading(true)
     try {
-      const res = await fetch(`/api/bse/quote?symbol=${encodeURIComponent(scripCode)}`, { cache: "no-store" })
+      const res = await fetchWithTimeout(`/api/bse/quote?symbol=${encodeURIComponent(scripCode)}`, {
+        cache: "no-store",
+        timeoutMs: 10000,
+      })
       const d = await res.json()
       
       if (!d || d.error) {
@@ -734,11 +840,8 @@ export default function AnnouncementsPage() {
         if (!filters.impacts.includes(a.impact)) return false
       }
 
-      // During market hours filter (approximate, based on local time)
-      if (filters.duringMarketHours) {
-        const hour = announcementDate.getHours()
-        if (hour < 9 || hour >= 16) return false
-      }
+      // During market hours filter: BSE cash 09:15–15:30 IST
+      if (filters.duringMarketHours && !isWithinMarketHoursIST(announcementDate)) return false
       
       // Text search filter
       if (query) {
@@ -924,9 +1027,9 @@ export default function AnnouncementsPage() {
   }, [])
 
   return (
-    <div className="h-screen max-h-screen bg-gradient-to-b from-black via-zinc-950 to-black text-white flex overflow-hidden">
+    <div className="h-screen max-h-screen bg-gradient-to-b from-black via-zinc-950 to-black text-white flex overflow-hidden" suppressHydrationWarning>
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+      <div className="flex-1 flex flex-col h-screen overflow-hidden" suppressHydrationWarning>
         {/* Stock Ticker */}
         <StockTicker 
           stocks={tickerStocks}
@@ -947,9 +1050,14 @@ export default function AnnouncementsPage() {
         />
 
         {/* Header */}
-          <header className="flex items-center justify-between gap-4 px-4 py-3 border-b border-white/5 bg-black/20">
+          <header className="flex items-center justify-between gap-4 px-4 py-3 border-b border-white/5 bg-black/20" suppressHydrationWarning>
             <div className="flex items-center gap-4">
-              <h1 className="text-lg font-semibold text-white">Announcements</h1>
+              <h1 className="text-lg font-semibold text-white" suppressHydrationWarning>Announcements</h1>
+              <OnboardingHint
+                id="announcements-hint"
+                message="Use filters to narrow by impact, verdict, or market cap. Press Ctrl+K to search. AI summaries appear for high-impact filings."
+                position="bottom"
+              />
               <DigitalClock />
             </div>
 
@@ -1212,7 +1320,7 @@ export default function AnnouncementsPage() {
                 <div className="p-8 text-center">
                   <AlertTriangle className="h-10 w-10 text-rose-500 mx-auto mb-3" />
                   <p className="text-sm text-rose-400">{error}</p>
-                  <button onClick={fetchAnnouncements} className="mt-3 text-sm text-cyan-400 hover:underline">
+                  <button onClick={() => fetchAnnouncements()} className="mt-3 text-sm text-cyan-400 hover:underline">
                     Retry
                   </button>
                 </div>
@@ -1309,6 +1417,9 @@ export default function AnnouncementsPage() {
                                     )}>
                                       {a.category.toUpperCase()}
                                     </span>
+                                    {a.source === "FinEdge" && (
+                                      <span className="px-2 py-0.5 rounded-md bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 text-[10px] font-bold">FinEdge</span>
+                                    )}
                                     {bookmarks.has(a.id) && (
                                       <Bookmark className="h-3 w-3 text-amber-500 fill-amber-500" />
                                     )}
@@ -1354,7 +1465,7 @@ export default function AnnouncementsPage() {
             <main className={clsx(
               "flex-1 overflow-hidden transition-all duration-300",
               mobileView === 'detail' ? "flex" : "hidden md:flex"
-            )}>
+            )} suppressHydrationWarning>
               {selected ? (
                 <div className="h-full w-full overflow-y-auto scrollbar-thin p-5 pb-32 md:pb-5 space-y-4">
                   {/* Mobile Back Button */}
@@ -1456,14 +1567,22 @@ export default function AnnouncementsPage() {
                                   Screener
                                   <ExternalLink className="h-2.5 w-2.5 opacity-50" />
                                 </a>
-                                <Link
-                                  href={`/company/${selected.scripCode}`}
-                                  className="flex items-center gap-1 px-2 py-1 rounded-md bg-cyan-500/10 hover:bg-cyan-500/20 text-[10px] font-medium text-cyan-400 transition-all"
-                                >
-                                  <Sparkles className="h-3 w-3" />
-                                  Speedy Alpha
-                                  <ChevronRight className="h-2.5 w-2.5" />
-                                </Link>
+                                  <Link
+                                    href={`/company/${selected.scripCode}`}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-cyan-500/10 hover:bg-cyan-500/20 text-[10px] font-medium text-cyan-400 transition-all"
+                                  >
+                                    <Sparkles className="h-3 w-3" />
+                                    Speedy Alpha
+                                    <ChevronRight className="h-2.5 w-2.5" />
+                                  </Link>
+                                    <button
+                                      onClick={() => setResearchOverlayOpen(true)}
+                                      className="flex items-center gap-1 px-2 py-1 rounded-md bg-purple-500/10 hover:bg-purple-500/20 text-[10px] font-medium text-purple-400 transition-all"
+                                      title="Open research note for this announcement"
+                                    >
+                                      <PenSquare className="h-3 w-3" />
+                                      Research Note
+                                    </button>
                               </div>
                         </div>
 
@@ -1964,6 +2083,14 @@ export default function AnnouncementsPage() {
           setQuery(stock.symbol)
           setShowSearchModal(false)
         }}
+      />
+
+      {/* Research Note Overlay */}
+      <ResearchNoteOverlay
+        isOpen={researchOverlayOpen}
+        onClose={() => setResearchOverlayOpen(false)}
+        context={researchContext}
+        initialTitle={researchContext?.announcement?.headline}
       />
 
       {/* Speedy AI Chat - PIP Style */}

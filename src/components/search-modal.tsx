@@ -1,10 +1,11 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useRouter } from "next/navigation"
-import { Search, X, Plus, Star, TrendingUp, TrendingDown, Building2, Sparkles, ExternalLink, ArrowRight, Clock, FileText, Calendar, Newspaper, Landmark, Trash2, Megaphone, Filter, ChevronDown, Coins, Gift, Scissors, Users, Briefcase } from "lucide-react"
+import { Search, X, Plus, Star, TrendingUp, TrendingDown, Building2, Sparkles, ExternalLink, ArrowRight, Clock, FileText, Calendar, Newspaper, Landmark, Trash2, Megaphone, Filter, ChevronDown, Coins, Gift, Scissors, Users, Briefcase, RefreshCw } from "lucide-react"
 import clsx from "clsx"
 import { getWatchlist, addToWatchlist, removeFromWatchlist, isInWatchlist, type WatchlistItem } from "@/lib/storage"
+import { fetchWithTimeout } from "@/lib/fetch-with-timeout"
 
 interface SearchResult {
   symbol: string
@@ -121,7 +122,12 @@ export function SearchModal({ isOpen, onClose, onSelectStock }: SearchModalProps
   
   // Additional data for tabs
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
+  const [announcementsLoading, setAnnouncementsLoading] = useState(false)
+  const [announcementsError, setAnnouncementsError] = useState<string | null>(null)
   const [corporateActions, setCorporateActions] = useState<CorporateAction[]>([])
+  const [corporateActionsLoading, setCorporateActionsLoading] = useState(false)
+  const [corporateActionsError, setCorporateActionsError] = useState<string | null>(null)
+  const tabFetchAbortRef = useRef<AbortController | null>(null)
   const [searchHistory, setSearchHistory] = useState<string[]>([])
   const [favourites, setFavourites] = useState<SearchResult[]>([])
   const [eventTypeFilter, setEventTypeFilter] = useState('all')
@@ -253,41 +259,90 @@ export function SearchModal({ isOpen, onClose, onSelectStock }: SearchModalProps
     router.push(`/company/${scripCode}`)
   }
   
-  // Fetch recent announcements
-  const fetchAnnouncements = useCallback(async () => {
+  // Fetch recent announcements (optional signal for abort on tab switch / modal close)
+  const fetchAnnouncements = useCallback(async (signal?: AbortSignal) => {
+    setAnnouncementsLoading(true)
+    setAnnouncementsError(null)
     try {
-      const response = await fetch('/api/bse/announcements')
+      const response = await fetchWithTimeout('/api/bse/announcements?maxPages=10', {
+        timeoutMs: 18000,
+        signal,
+      })
       if (response.ok) {
         const data = await response.json()
         setAnnouncements((data.announcements || []).slice(0, 20))
+        setAnnouncementsError(null)
+      } else {
+        setAnnouncementsError("Couldn't load announcements")
       }
     } catch (e) {
-      console.error('Failed to fetch announcements')
+      if ((e as Error)?.name === 'AbortError') return
+      console.error('Failed to fetch announcements', e)
+      setAnnouncementsError("Couldn't load announcements")
+    } finally {
+      setAnnouncementsLoading(false)
     }
   }, [])
-  
-  // Fetch corporate actions
-  const fetchCorporateActions = useCallback(async () => {
+
+  // Fetch corporate actions (optional signal for abort on tab switch / modal close)
+  const fetchCorporateActions = useCallback(async (signal?: AbortSignal) => {
+    setCorporateActionsLoading(true)
+    setCorporateActionsError(null)
     try {
-      const response = await fetch('/api/bse/corporate-actions?days=30')
+      const response = await fetchWithTimeout('/api/bse/corporate-actions?days=30', {
+        timeoutMs: 15000,
+        signal,
+      })
       if (response.ok) {
         const data = await response.json()
         setCorporateActions((data.actions || []).slice(0, 20))
+        setCorporateActionsError(null)
+      } else {
+        setCorporateActionsError("Couldn't load corporate actions")
       }
     } catch (e) {
-      console.error('Failed to fetch corporate actions')
+      if ((e as Error)?.name === 'AbortError') return
+      console.error('Failed to fetch corporate actions', e)
+      setCorporateActionsError("Couldn't load corporate actions")
+    } finally {
+      setCorporateActionsLoading(false)
     }
   }, [])
-  
-  // Load data when tab changes
+
+  // Load data when tab changes; abort in-flight fetch when tab or modal changes
   useEffect(() => {
     if (!isOpen) return
-    if (activeTab === 'announcements' && announcements.length === 0) {
-      fetchAnnouncements()
-    } else if (activeTab === 'corporate' && corporateActions.length === 0) {
-      fetchCorporateActions()
+    tabFetchAbortRef.current?.abort()
+    tabFetchAbortRef.current = null
+    if (activeTab === 'announcements' && announcements.length === 0 && !announcementsLoading && !announcementsError) {
+      const ctrl = new AbortController()
+      tabFetchAbortRef.current = ctrl
+      fetchAnnouncements(ctrl.signal)
+    } else if (activeTab === 'corporate' && corporateActions.length === 0 && !corporateActionsLoading && !corporateActionsError) {
+      const ctrl = new AbortController()
+      tabFetchAbortRef.current = ctrl
+      fetchCorporateActions(ctrl.signal)
     }
-  }, [activeTab, isOpen, announcements.length, corporateActions.length, fetchAnnouncements, fetchCorporateActions])
+    return () => {
+      tabFetchAbortRef.current?.abort()
+      tabFetchAbortRef.current = null
+    }
+  }, [activeTab, isOpen, announcements.length, announcementsLoading, announcementsError, corporateActions.length, corporateActionsLoading, corporateActionsError, fetchAnnouncements, fetchCorporateActions])
+
+  // Filter announcements by search query when on Announcements tab
+  const filteredAnnouncements = useMemo(() => {
+    if (activeTab !== 'announcements') return []
+    const q = query.trim().toLowerCase()
+    if (!q) return announcements
+    return announcements.filter((a) => {
+      const headline = String(a.headline ?? '').toLowerCase()
+      const company = String(a.company ?? '').toLowerCase()
+      const category = String(a.category ?? '').toLowerCase()
+      const subCategory = String(a.subCategory ?? '').toLowerCase()
+      const scripCode = String(a.scripCode ?? '').toLowerCase()
+      return headline.includes(q) || company.includes(q) || category.includes(q) || subCategory.includes(q) || scripCode.includes(q)
+    })
+  }, [activeTab, query, announcements])
 
   useEffect(() => {
     if (isOpen && inputRef.current) {
@@ -331,6 +386,26 @@ export function SearchModal({ isOpen, onClose, onSelectStock }: SearchModalProps
           type: r.type || "stock",
           scripCode: r.scripCode
         }))
+      }
+
+      // Fallback: unified lookup (BSE + NSE via nse-bse-api)
+      try {
+        const lookupRes = await fetch(`/api/lookup?q=${encodeURIComponent(q)}`)
+        if (lookupRes.ok) {
+          const lookupData = await lookupRes.json()
+          const results = lookupData?.results
+          if (Array.isArray(results) && results.length > 0) {
+            return results.map((r: any) => ({
+              symbol: r.symbol,
+              name: r.name || r.symbol,
+              exchange: r.exchange || "BSE",
+              type: "stock",
+              scripCode: r.scripCode
+            }))
+          }
+        }
+      } catch (_) {
+        // ignore
       }
       
       // Fallback to local popular stocks filter
@@ -675,13 +750,48 @@ export function SearchModal({ isOpen, onClose, onSelectStock }: SearchModalProps
           {/* Announcements Tab */}
           {activeTab === 'announcements' && (
             <div className="p-4 space-y-2">
-              {announcements.length === 0 ? (
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-white">Recent Announcements</h3>
+                <button
+                  onClick={() => fetchAnnouncements()}
+                  disabled={announcementsLoading}
+                  className="p-2 rounded-lg text-zinc-400 hover:text-cyan-400 hover:bg-cyan-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Refresh announcements"
+                  aria-label="Refresh announcements"
+                >
+                  <RefreshCw className={clsx("h-4 w-4", announcementsLoading && "animate-spin")} />
+                </button>
+              </div>
+              {announcementsLoading ? (
                 <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
-                  <Megaphone className="h-12 w-12 mb-3 opacity-50" />
+                  <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mb-3" />
                   <p>Loading announcements...</p>
                 </div>
+              ) : announcementsError ? (
+                <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
+                  <Megaphone className="h-12 w-12 mb-3 opacity-50" />
+                  <p className="text-sm mb-3">{announcementsError}</p>
+                  <button
+                    onClick={() => fetchAnnouncements()}
+                    className="px-4 py-2 rounded-xl bg-cyan-500/20 text-cyan-400 text-sm font-medium hover:bg-cyan-500/30 transition-colors"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : announcements.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
+                  <Megaphone className="h-12 w-12 mb-3 opacity-50" />
+                  <p>No announcements</p>
+                  <p className="text-xs mt-1">No announcements in this period</p>
+                </div>
+              ) : query.trim() !== '' && filteredAnnouncements.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
+                  <Search className="h-12 w-12 mb-3 opacity-50" />
+                  <p>No announcements match your search</p>
+                  <p className="text-xs mt-1">Try a different keyword or company</p>
+                </div>
               ) : (
-                announcements.map((ann) => {
+                filteredAnnouncements.map((ann) => {
                   const h = (ann.headline || '').toLowerCase()
                   const tags: { key: string; label: string; cls: string }[] = []
                   const add = (key: string, label: string, cls: string) => {
@@ -725,10 +835,21 @@ export function SearchModal({ isOpen, onClose, onSelectStock }: SearchModalProps
           {/* Corporate Actions Tab */}
           {activeTab === 'corporate' && (
             <div className="p-4 space-y-3">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-white">Recent Corporate Events</h3>
+                <button
+                  onClick={() => fetchCorporateActions()}
+                  disabled={corporateActionsLoading}
+                  className="p-2 rounded-lg text-zinc-400 hover:text-cyan-400 hover:bg-cyan-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Refresh corporate actions"
+                  aria-label="Refresh corporate actions"
+                >
+                  <RefreshCw className={clsx("h-4 w-4", corporateActionsLoading && "animate-spin")} />
+                </button>
+              </div>
               {/* Header with Event Type Filter */}
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-white">Recent Corporate Events</h3>
-                
+                <span className="text-xs text-zinc-500">Filter by type</span>
                 {/* Event Type Dropdown */}
                 <div className="relative">
                   <button
@@ -767,12 +888,29 @@ export function SearchModal({ isOpen, onClose, onSelectStock }: SearchModalProps
                   )}
                 </div>
               </div>
-              
+
               {/* Corporate Actions List */}
-              {corporateActions.length === 0 ? (
+              {corporateActionsLoading ? (
+                <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
+                  <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin mb-3" />
+                  <p>Loading corporate actions...</p>
+                </div>
+              ) : corporateActionsError ? (
+                <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
+                  <Calendar className="h-12 w-12 mb-3 opacity-50" />
+                  <p className="text-sm mb-3">{corporateActionsError}</p>
+                  <button
+                    onClick={() => fetchCorporateActions()}
+                    className="px-4 py-2 rounded-xl bg-cyan-500/20 text-cyan-400 text-sm font-medium hover:bg-cyan-500/30 transition-colors"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : corporateActions.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-zinc-500">
                   <Calendar className="h-12 w-12 mb-3 opacity-50" />
-                  <p>Loading corporate actions...</p>
+                  <p>No corporate actions</p>
+                  <p className="text-xs mt-1">No events in this period</p>
                 </div>
               ) : (
                 <div className="space-y-2">

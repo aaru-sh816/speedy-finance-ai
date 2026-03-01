@@ -1,0 +1,11 @@
+---
+description: API routes - avoid waterfalls, use Promise.all
+globs: src/app/api/**/*.ts
+alwaysApply: false
+---
+
+# API Routes — No Waterfalls
+
+- Independent fetches must run in parallel with `Promise.all([...])`
+- Defer await until needed: do not await before early-return branches
+- Use `Promise.allSettled` if partial success is acceptable

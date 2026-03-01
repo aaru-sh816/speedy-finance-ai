@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Megaphone, FileText, Calendar, Printer, Bell, ChevronLeft, ChevronRight, Mic2 } from "lucide-react"
+import { Megaphone, FileText, Calendar, Printer, Bell, ChevronLeft, ChevronRight, Mic2, StickyNote } from "lucide-react"
 import Link from "next/link"
 import { VoiceAnalyst } from "./VoiceAnalyst"
 
@@ -20,6 +20,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "documents", icon: FileText, label: "Documents", href: "/documents" },
   { id: "calendar", icon: Calendar, label: "Calendar", href: "/calendar" },
   { id: "alerts", icon: Bell, label: "Alerts", href: "/alerts" },
+  { id: "notes", icon: StickyNote, label: "Research", href: "/research" },
   { id: "print", icon: Printer, label: "Print", href: "#" },
 ]
 

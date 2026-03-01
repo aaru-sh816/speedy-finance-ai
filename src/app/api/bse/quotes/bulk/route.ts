@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
+import {
+  getBseQuoteFromApi,
+  getBse52WeekFromApi,
+  getBseMarketCapFromApi,
+} from "@/lib/nse-bse/unified-market"
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -12,6 +17,8 @@ interface QuoteResult {
   dayHigh: number | null
   dayLow: number | null
   marketCap: number | null
+  fiftyTwoWeekHigh: number | null
+  fiftyTwoWeekLow: number | null
   previousClose: number | null
   timestamp: string
   source: string
@@ -106,11 +113,87 @@ async function fetchSingleQuote(symbol: string, timeout: number = 10000): Promis
     return { ...cached, source: cached.source + '-cached' }
   }
 
+  // BSE scrip codes: nse-bse-api with 52-week and marketCap from listSecurities
+  if (isBseScripCode(symbol)) {
+    const [bseQuote, week52, mcap] = await Promise.all([
+      getBseQuoteFromApi(symbol),
+      getBse52WeekFromApi(symbol),
+      getBseMarketCapFromApi(symbol),
+    ])
+    if (bseQuote) {
+      const result: QuoteResult = {
+        symbol: bseQuote.symbol,
+        price: bseQuote.price,
+        change: bseQuote.change,
+        changePercent: bseQuote.changePercent,
+        volume: bseQuote.volume,
+        dayHigh: bseQuote.dayHigh,
+        dayLow: bseQuote.dayLow,
+        marketCap: mcap ?? bseQuote.marketCap ?? null,
+        fiftyTwoWeekHigh: week52?.fifty2WeekHigh ?? null,
+        fiftyTwoWeekLow: week52?.fifty2WeekLow ?? null,
+        previousClose: bseQuote.previousClose,
+        timestamp: new Date().toISOString(),
+        source: 'nse-bse-api',
+      }
+      setCachedQuote(symbol, result)
+      return result
+    }
+    // Optional Python service
+    try {
+      const bseServiceUrl = process.env.BSE_SERVICE_URL || 'http://localhost:5000'
+      const res = await fetch(`${bseServiceUrl}/api/quote/${encodeURIComponent(symbol)}`, {
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(timeout),
+      })
+      if (res.ok) {
+        const json = await res.json()
+        if (json.success && json.data) {
+          const data = json.data
+          const result: QuoteResult = {
+            symbol: symbol.toUpperCase(),
+            price: parseNumber(data.currentValue ?? data.lastPrice ?? data.ltp ?? data.price),
+            change: parseNumber(data.change),
+            changePercent: parseNumber(data.pChange ?? data.percentChange),
+            volume: parseNumber(data.totalTradedQuantity ?? data.volume ?? data.totalTradedVolume),
+            dayHigh: parseNumber(data.dayHigh ?? data.high),
+            dayLow: parseNumber(data.dayLow ?? data.low),
+            marketCap: parseNumber(data.marketCapFull ?? data.marketCap ?? data.mktCap),
+            fiftyTwoWeekHigh: parseNumber(data.weekHigh52 ?? data.fiftyTwoWeekHigh),
+            fiftyTwoWeekLow: parseNumber(data.weekLow52 ?? data.fiftyTwoWeekLow),
+            previousClose: parseNumber(data.previousClose ?? data.prevClose),
+            timestamp: new Date().toISOString(),
+            source: 'bse-python',
+          }
+          setCachedQuote(symbol, result)
+          return result
+        }
+      }
+    } catch (_) {}
+    return {
+      symbol: symbol.toUpperCase(),
+      price: null,
+      change: null,
+      changePercent: null,
+      volume: null,
+      dayHigh: null,
+      dayLow: null,
+      marketCap: null,
+      fiftyTwoWeekHigh: null,
+      fiftyTwoWeekLow: null,
+      previousClose: null,
+      timestamp: new Date().toISOString(),
+      source: 'error',
+      error: 'Failed to fetch BSE quote',
+    }
+  }
+
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), timeout)
 
   try {
-    const bseServiceUrl = process.env.BSE_SERVICE_URL || 'http://localhost:8080'
+    const bseServiceUrl = process.env.BSE_SERVICE_URL || 'http://localhost:5000'
     const res = await fetch(`${bseServiceUrl}/api/quote/${encodeURIComponent(symbol)}`, {
       cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
@@ -129,27 +212,6 @@ async function fetchSingleQuote(symbol: string, timeout: number = 10000): Promis
     }
 
     const data = json.data || {}
-    
-    let marketCap = parseNumber(
-      data.marketCapFull ?? data.marketCapFreeFloat ?? data.marketCap ?? data.mktCap
-    )
-
-    if (marketCap == null && isBseScripCode(symbol)) {
-      try {
-        const headerRes = await fetch(`${bseServiceUrl}/api/company/${symbol}`, {
-          cache: 'no-store',
-          signal: AbortSignal.timeout(2000)
-        })
-        if (headerRes.ok) {
-          const headerJson = await headerRes.json()
-          if (headerJson.success && headerJson.data?.quote) {
-            const q = headerJson.data.quote
-            marketCap = parseNumber(q.marketCapFull || q.marketCapFreeFloat || q.marketCap || q.mktCap)
-          }
-        }
-      } catch {}
-    }
-
     const result: QuoteResult = {
       symbol: symbol.toUpperCase(),
       price: parseNumber(data.currentValue ?? data.lastPrice ?? data.ltp ?? data.price),
@@ -158,54 +220,18 @@ async function fetchSingleQuote(symbol: string, timeout: number = 10000): Promis
       volume: parseNumber(data.totalTradedQuantity ?? data.volumeTradedToday ?? data.volume ?? data.totalTradedVolume),
       dayHigh: parseNumber(data.dayHigh ?? data.high),
       dayLow: parseNumber(data.dayLow ?? data.low),
-      marketCap,
+      marketCap: parseNumber(data.marketCapFull ?? data.marketCapFreeFloat ?? data.marketCap ?? data.mktCap),
+      fiftyTwoWeekHigh: parseNumber(data.weekHigh52 ?? data.fiftyTwoWeekHigh),
+      fiftyTwoWeekLow: parseNumber(data.weekLow52 ?? data.fiftyTwoWeekLow),
       previousClose: parseNumber(data.previousClose ?? data.prevClose),
       timestamp: new Date().toISOString(),
-      source: 'bse-python'
+      source: 'bse-python',
     }
 
     setCachedQuote(symbol, result)
     return result
-
   } catch (error: any) {
     clearTimeout(timeoutId)
-    
-    if (isBseScripCode(symbol)) {
-      try {
-        const bseDirectUrl = `https://api.bseindia.com/BseIndiaAPI/api/StockTrading/w?flag=&quotetype=EQ&scripcode=${encodeURIComponent(symbol)}`
-        const directRes = await fetch(bseDirectUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://www.bseindia.com/',
-            'Accept': 'application/json',
-          },
-          cache: 'no-store',
-          signal: AbortSignal.timeout(5000),
-        })
-
-        if (directRes.ok) {
-          const directData = await directRes.json()
-          if (directData && (directData.CurrRate || directData.LTP)) {
-            const result: QuoteResult = {
-              symbol: symbol.toUpperCase(),
-              price: parseNumber(directData.CurrRate ?? directData.LTP),
-              change: parseNumber(directData.Change),
-              changePercent: parseNumber(directData.PcntChange ?? directData.PercentChange),
-              volume: parseNumber(directData.TradQnty ?? directData.Volume),
-              dayHigh: parseNumber(directData.High),
-              dayLow: parseNumber(directData.Low),
-              marketCap: parseNumber(directData.MktCapFull ?? directData.MktCapFF),
-              previousClose: parseNumber(directData.PrevClose ?? directData.YesterdayClose),
-              timestamp: new Date().toISOString(),
-              source: 'bse-direct'
-            }
-            setCachedQuote(symbol, result)
-            return result
-          }
-        }
-      } catch {}
-    }
-
     return {
       symbol: symbol.toUpperCase(),
       price: null,
@@ -215,10 +241,12 @@ async function fetchSingleQuote(symbol: string, timeout: number = 10000): Promis
       dayHigh: null,
       dayLow: null,
       marketCap: null,
+      fiftyTwoWeekHigh: null,
+      fiftyTwoWeekLow: null,
       previousClose: null,
       timestamp: new Date().toISOString(),
       source: 'error',
-      error: error.message || 'Failed to fetch quote'
+      error: error.message || 'Failed to fetch quote',
     }
   }
 }

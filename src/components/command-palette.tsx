@@ -22,6 +22,7 @@ import {
   Hash,
   Calendar,
   Activity,
+  PieChart,
   ChevronRight
 } from 'lucide-react'
 import { getWatchlist, addToWatchlist } from '@/lib/storage'
@@ -51,6 +52,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
 
   // Quick actions
   const quickActions = [
+    { id: 'portfolio', label: 'Go to Portfolio', icon: PieChart, shortcut: 'P', action: () => { router.push('/portfolio'); onClose() } },
     { id: 'watchlist', label: 'Go to Watchlist', icon: Star, shortcut: 'W', action: () => { router.push('/watchlist'); onClose() } },
     { id: 'notes', label: 'Go to Notes', icon: FileText, shortcut: 'N', action: () => { router.push('/notes'); onClose() } },
     { id: 'bulk-deals', label: 'Bulk Deals', icon: BarChart3, shortcut: 'B', action: () => { router.push('/bulk-deals'); onClose() } },
@@ -386,9 +388,13 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
         setIsOpen(true)
       }
     }
-
+    const handleOpenPalette = () => setIsOpen(true)
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener('speedy:open-command-palette', handleOpenPalette)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('speedy:open-command-palette', handleOpenPalette)
+    }
   }, [])
 
   return (

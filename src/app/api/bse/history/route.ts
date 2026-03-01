@@ -1,40 +1,24 @@
 import { NextResponse } from "next/server"
 import { metrics } from "@/lib/infra/metrics"
+import { getBseLookupFromApi, getBseListSecuritiesFromApi } from "@/lib/nse-bse/unified-market"
 
-const BSE_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0",
-  "Accept": "application/json, text/plain, */*",
-  "Accept-Language": "en-US,en;q=0.5",
-  "Origin": "https://www.bseindia.com",
-  "Referer": "https://www.bseindia.com",
-}
-
-async function getSymbolFromScripCode(scripCode: string): Promise<string | null> {
-  try {
-    const url = `https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w?scripcode=${scripCode}&segment=Equity&status=Active`
-    const res = await fetch(url, { 
-      method: "GET", 
-      headers: BSE_HEADERS, 
-      cache: "no-store",
-      signal: AbortSignal.timeout(5000)
-    })
-    if (!res.ok) return null
-    const contentType = res.headers.get('content-type') || ''
-    if (!contentType.includes('application/json')) return null
-    const text = await res.text()
-    if (text.startsWith('<') || text.startsWith('<!')) return null
-    const data = JSON.parse(text)
-    if (!Array.isArray(data) || data.length === 0) return null
-    const symbol = data[0]?.scrip_id as string | undefined
-    return symbol && /^[A-Z0-9&-]+$/i.test(symbol) ? symbol.toUpperCase() : null
-  } catch {
-    return null
+/** Resolve BSE scrip code to symbol via nse-bse-api (no direct BSE URL). */
+async function resolveSymbolFromScripCode(scripCode: string): Promise<string | null> {
+  const lookup = await getBseLookupFromApi(scripCode)
+  if (lookup?.symbol && /^[A-Z0-9&-]+$/i.test(String(lookup.symbol))) {
+    return String(lookup.symbol).toUpperCase()
   }
+  const list = await getBseListSecuritiesFromApi({ scripcode: scripCode, segment: "Equity", status: "Active" })
+  const first = list[0]
+  if (first?.symbol && /^[A-Z0-9&-]+$/i.test(first.symbol)) {
+    return first.symbol.toUpperCase()
+  }
+  return null
 }
 
-  async function getSymbolFromPythonService(scripCode: string): Promise<string | null> {
+async function getSymbolFromPythonService(scripCode: string): Promise<string | null> {
     try {
-      const BSE_SERVICE_URL = process.env.BSE_SERVICE_URL || 'http://localhost:8080'
+      const BSE_SERVICE_URL = process.env.BSE_SERVICE_URL || 'http://localhost:5000'
       const res = await fetch(`${BSE_SERVICE_URL}/api/quote/${scripCode}`, {
         method: "GET",
         cache: "no-store",
@@ -67,13 +51,9 @@ export async function GET(request: Request) {
       // If symbol is just a scrip code (numeric), try to resolve the actual trading symbol
       let resolvedSymbol = symbol
       if (scripCode && (!symbol || symbol === scripCode || /^\d+$/.test(symbol || ''))) {
-        // Try BSE ListofScripData first
-        let bseSymbol = await getSymbolFromScripCode(scripCode)
-        
-        // Fallback to Python service if BSE API fails
-        if (!bseSymbol) {
-          bseSymbol = await getSymbolFromPythonService(scripCode)
-        }
+        let bseSymbol: string | null = null
+        bseSymbol = await resolveSymbolFromScripCode(scripCode)
+        if (!bseSymbol) bseSymbol = await getSymbolFromPythonService(scripCode)
         
         if (bseSymbol) {
           resolvedSymbol = bseSymbol

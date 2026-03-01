@@ -1,11 +1,14 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { clsx } from "clsx"
-import { TrendingUp, TrendingDown, RefreshCw, ArrowUpRight, ArrowDownRight, LayoutGrid, Zap, Sparkles } from "lucide-react"
+import { RefreshCw, ArrowUpRight, ArrowDownRight, LayoutGrid, Zap, Sparkles, BarChart3, FileText, Calendar, TrendingUp } from "lucide-react"
+import { ResponsiveContainer, LineChart, Line } from "recharts"
 
 import { RiskRadar } from "@/components/risk-radar"
 import { FeyNav } from "@/components/fey/FeyNav"
+import { fetchWithTimeout } from "@/lib/fetch-with-timeout"
 
 type Stock = {
   scripCode: string
@@ -42,43 +45,117 @@ function buildMarketRecap(gainers: Stock[], losers: Stock[]): string {
   return "Live market recap will appear here once movers are available."
 }
 
+type AdvanceDecline = { advances?: number; declines?: number; unchanged?: number }[]
+
+type Near52Row = {
+  scripcode?: string
+  scripCode?: string
+  companyname?: string
+  ltp?: number
+  high52?: number
+  low52?: number
+  [key: string]: unknown
+}
+
 export default function MarketPage() {
   const [activeTab, setActiveTab] = useState<"gainers" | "losers">("gainers")
   const [gainers, setGainers] = useState<Stock[]>([])
   const [losers, setLosers] = useState<Stock[]>([])
+  const [advanceDecline, setAdvanceDecline] = useState<AdvanceDecline>([])
+  const [near52Highs, setNear52Highs] = useState<Near52Row[]>([])
+  const [near52Lows, setNear52Lows] = useState<Near52Row[]>([])
   const [loading, setLoading] = useState(false)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [mounted, setMounted] = useState(false)
+  const [fetchError, setFetchError] = useState<string | null>(null)
 
   const fetchMarketMovers = async () => {
     setLoading(true)
-    try {
-      const [gainersRes, losersRes] = await Promise.all([
-        fetch('/api/bse/market-movers?type=gainers'),
-        fetch('/api/bse/market-movers?type=losers')
-      ])
-      const gainersData = await gainersRes.json()
-      const losersData = await losersRes.json()
-
-      const toStocks = (rows: any[] | undefined | null): Stock[] => {
-        if (!Array.isArray(rows)) return []
-        return rows.map((row: any) => ({
-          scripCode: row.scripCode || row.securityID || "",
-          scripName: row.securityID || row.scripCode || "",
-          ltp: Number(row.LTP ?? row.ltp ?? 0),
-          change: Number(row.change ?? 0),
-          changePct: Number(row.pChange ?? row.changePct ?? 0),
-        }))
-      }
-
-      setGainers(toStocks(gainersData.data))
-      setLosers(toStocks(losersData.data))
-      setLastUpdated(new Date())
-    } catch (error) {
-      console.error('Failed to fetch market movers:', error)
-    } finally {
-      setLoading(false)
+    setFetchError(null)
+    const timeoutMs = 20000 // generous timeout for nse-bse-api (BSE can be slow)
+    const toStocks = (rows: unknown): Stock[] => {
+      if (!Array.isArray(rows)) return []
+      return (rows as Record<string, unknown>[])
+        .map((row: Record<string, unknown>) => {
+          const scripCode = String(
+            row?.scripCode ?? row?.scripcode ?? row?.scrip_code ?? row?.ScripCode ?? row?.code ?? ""
+          ).trim()
+          const scripName = String(
+            row?.scripName ?? row?.scrip_name ?? row?.companyname ?? row?.securityID ?? row?.SecurityID ?? row?.name ?? scripCode
+          ).trim()
+          if (!scripCode) return null
+          return {
+            scripCode,
+            scripName,
+            ltp: Number(row?.LTP ?? row?.ltp ?? row?.lastPrice ?? 0),
+            change: Number(row?.change ?? row?.Change ?? 0),
+            changePct: Number(row?.pChange ?? row?.pchange ?? row?.changePct ?? row?.pchangePct ?? 0),
+          } satisfies Stock
+        })
+        .filter((s: Stock | null): s is Stock => Boolean(s))
     }
+    const to52 = (arr: unknown[]): Near52Row[] =>
+      (arr || []).map((r: unknown) => {
+        const row = r as Record<string, unknown>
+        return {
+          scripcode: String(row?.scripcode ?? row?.Scrip_Code ?? row?.scripCode ?? ""),
+          scripCode: String(row?.scripcode ?? row?.Scrip_Code ?? row?.scripCode ?? ""),
+          companyname: String(row?.companyname ?? row?.SecurityID ?? row?.companyName ?? ""),
+          ltp: Number(row?.LTP ?? row?.ltp ?? 0),
+          high52: Number(row?.high52 ?? row?.High_52 ?? 0),
+          low52: Number(row?.low52 ?? row?.Low_52 ?? 0),
+          ...row,
+        } satisfies Near52Row
+      })
+
+    const urls = [
+      '/api/bse/market-movers?type=gainers',
+      '/api/bse/market-movers?type=losers',
+      '/api/bse/advance-decline',
+      '/api/bse/near-52week',
+    ] as const
+    const settled = await Promise.allSettled(
+      urls.map((url) => fetchWithTimeout(url, { timeoutMs }))
+    )
+
+    let gainersData: { data?: unknown } = { data: [] }
+    let losersData: { data?: unknown } = { data: [] }
+    let adData: { data?: unknown } = { data: [] }
+    let near52Data: { highs?: unknown[]; lows?: unknown[] } = { highs: [], lows: [] }
+    const errors: string[] = []
+
+    if (settled[0].status === 'fulfilled' && settled[0].value.ok) {
+      try { gainersData = await settled[0].value.json() } catch { gainersData = { data: [] } }
+    } else if (settled[0].status === 'rejected') errors.push((settled[0].reason as Error)?.message || 'Gainers')
+    if (settled[1].status === 'fulfilled' && settled[1].value.ok) {
+      try { losersData = await settled[1].value.json() } catch { losersData = { data: [] } }
+    } else if (settled[1].status === 'rejected') errors.push((settled[1].reason as Error)?.message || 'Losers')
+    if (settled[2].status === 'fulfilled' && settled[2].value.ok) {
+      try { adData = await settled[2].value.json() } catch { adData = { data: [] } }
+    } else if (settled[2].status === 'rejected') errors.push((settled[2].reason as Error)?.message || 'Advance/decline')
+    if (settled[3].status === 'fulfilled' && settled[3].value.ok) {
+      try { near52Data = await settled[3].value.json() } catch { near52Data = { highs: [], lows: [] } }
+    } else if (settled[3].status === 'rejected') errors.push((settled[3].reason as Error)?.message || 'Near 52-week')
+
+    setGainers(toStocks(gainersData?.data))
+    setLosers(toStocks(losersData?.data))
+    setAdvanceDecline(Array.isArray(adData?.data) ? adData.data : [])
+    setNear52Highs(to52(near52Data?.highs ?? []))
+    setNear52Lows(to52(near52Data?.lows ?? []))
+    setLastUpdated(new Date())
+
+    // Only show role=alert when every endpoint failed (rejected); partial data is fine
+    const anyRejected = settled.some((s) => s.status === 'rejected')
+    const hasAnyData = toStocks(gainersData?.data).length > 0 || toStocks(losersData?.data).length > 0 ||
+      (Array.isArray(adData?.data) && adData.data.length > 0) ||
+      (Array.isArray(near52Data?.highs) && near52Data.highs.length > 0) ||
+      (Array.isArray(near52Data?.lows) && near52Data.lows.length > 0)
+    if (anyRejected && !hasAnyData && errors.length > 0) {
+      setFetchError(errors[0] ?? "Failed to load market data")
+    } else {
+      setFetchError(null)
+    }
+    setLoading(false)
   }
 
   useEffect(() => {
@@ -88,7 +165,9 @@ export default function MarketPage() {
     return () => clearInterval(interval)
   }, [])
 
-  const displayData = activeTab === "gainers" ? gainers : losers
+  const displayData = (activeTab === "gainers" ? gainers : losers).filter(
+    (s) => s.scripCode && String(s.scripCode).trim() !== "" && String(s.scripCode) !== "undefined"
+  )
 
   return (
 <div className="min-h-screen bg-black text-white selection:bg-cyan-500/30">
@@ -123,6 +202,10 @@ className="p-3 rounded-2xl bg-zinc-900/50 border border-zinc-800/50 hover:border
 <RefreshCw className={`h-5 w-5 text-zinc-500 group-hover:text-cyan-400 ${loading ? 'animate-spin' : ''}`} />
 </button>
 </div>
+
+{fetchError && (
+  <p className="text-rose-400 text-sm" role="alert">{fetchError}</p>
+)}
 
 {/* Tabs */}
 <div className="flex items-center gap-2 p-1.5 bg-zinc-900/50 backdrop-blur-xl border border-zinc-800/50 rounded-2xl w-fit">
@@ -181,7 +264,7 @@ Sync {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 {displayData.slice(0, 10).map((stock, index) => (
 <a
-key={stock.scripCode}
+key={`${stock.scripCode}-${stock.scripName}-${index}`}
 href={`/company/${stock.scripCode}`}
 className="group p-6 bg-zinc-900/20 backdrop-blur-3xl border border-zinc-800/30 rounded-[2.5rem] hover:border-cyan-500/30 transition-all relative overflow-hidden"
 >
@@ -217,6 +300,29 @@ activeTab === "gainers"
 </div>
 </div>
 
+<div className="relative mb-4 h-12 w-full opacity-80">
+<ResponsiveContainer width="100%" height="100%">
+<LineChart
+  data={[0, 1, 2, 3].map((i) => {
+    const ltp = Number(stock.ltp || 0)
+    const ch = Number(stock.change || 0)
+    const prev = ltp - ch
+    const pct = i / 3
+    return { t: i, v: prev + ch * pct }
+  })}
+  margin={{ top: 4, right: 4, left: 4, bottom: 4 }}
+>
+  <Line
+    type="monotone"
+    dataKey="v"
+    stroke={Number(stock.changePct || 0) >= 0 ? "#10b981" : "#f43f5e"}
+    strokeWidth={2}
+    dot={false}
+    isAnimationActive={false}
+  />
+</LineChart>
+</ResponsiveContainer>
+</div>
 <div className="relative flex items-end justify-between">
 <div className="space-y-1">
 <span className="text-[9px] text-zinc-600 font-black uppercase tracking-widest block">Last Traded Price</span>
@@ -244,6 +350,120 @@ Number(stock.changePct || 0) >= 0
 
 {/* Side Column */}
 <div className="lg:w-[450px] flex-shrink-0 space-y-8">
+
+{/* Advance / Decline */}
+{advanceDecline.length > 0 && (() => {
+  const row = advanceDecline[0]
+  const advances = row?.advances ?? 0
+  const declines = row?.declines ?? 0
+  const unchanged = row?.unchanged ?? 0
+  return (
+    <div className="p-6 bg-zinc-900/20 backdrop-blur-3xl border border-zinc-800/30 rounded-3xl" role="region" aria-label="BSE market breadth">
+      <div className="flex items-center gap-2 mb-4">
+        <BarChart3 className="w-4 h-4 text-cyan-500" aria-hidden />
+        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">BSE Breadth</span>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <div className="space-y-1">
+          <div className="text-emerald-400 text-lg font-black" aria-label={`${advances} advances`}>{advances}</div>
+          <div className="text-[10px] text-zinc-500 font-bold uppercase">Advances</div>
+        </div>
+        <div className="space-y-1">
+          <div className="text-rose-400 text-lg font-black" aria-label={`${declines} declines`}>{declines}</div>
+          <div className="text-[10px] text-zinc-500 font-bold uppercase">Declines</div>
+        </div>
+        <div className="space-y-1">
+          <div className="text-zinc-400 text-lg font-black" aria-label={`${unchanged} unchanged`}>{unchanged}</div>
+          <div className="text-[10px] text-zinc-500 font-bold uppercase">Unchanged</div>
+        </div>
+      </div>
+    </div>
+  )
+})()}
+
+{/* Near 52-week high / low */}
+{(near52Highs.length > 0 || near52Lows.length > 0) && (
+  <div className="p-6 bg-zinc-900/20 backdrop-blur-3xl border border-zinc-800/30 rounded-3xl" role="region" aria-label="Stocks near 52-week high and low">
+    <div className="flex items-center gap-2 mb-4">
+      <TrendingUp className="w-4 h-4 text-cyan-500" aria-hidden />
+      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Near 52-week</span>
+    </div>
+    <div className="grid grid-cols-1 gap-4">
+      {near52Highs.length > 0 && (
+        <div>
+          <div className="text-[10px] font-bold text-emerald-500/80 uppercase tracking-widest mb-2">Near high</div>
+          <ul className="space-y-1.5">
+            {near52Highs.slice(0, 5).map((row, i) => {
+              const code = String(row.scripCode ?? row.scripcode ?? "").trim()
+              const name = row.companyname ?? (code || "—")
+              const ltp = Number(row.ltp ?? 0)
+              const validCode = code && code !== "undefined"
+              return (
+                <li key={`h-${code}-${i}`}>
+                  {validCode ? (
+                    <Link href={`/company/${code}`} className="flex items-center justify-between py-1.5 px-2 rounded-xl hover:bg-zinc-800/40 text-sm text-zinc-300 hover:text-white transition-colors">
+                      <span className="truncate">{name}</span>
+                      <span className="text-emerald-400/90 font-medium tabular-nums ml-2">₹{ltp.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+                    </Link>
+                  ) : (
+                    <div className="flex items-center justify-between py-1.5 px-2 text-sm text-zinc-500">
+                      <span className="truncate">{name}</span>
+                      <span className="tabular-nums ml-2">₹{ltp.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+                    </div>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+      {near52Lows.length > 0 && (
+        <div>
+          <div className="text-[10px] font-bold text-rose-500/80 uppercase tracking-widest mb-2">Near low</div>
+          <ul className="space-y-1.5">
+            {near52Lows.slice(0, 5).map((row, i) => {
+              const code = String(row.scripCode ?? row.scripcode ?? "").trim()
+              const name = row.companyname ?? (code || "—")
+              const ltp = Number(row.ltp ?? 0)
+              const validCode = code && code !== "undefined"
+              return (
+                <li key={`l-${code}-${i}`}>
+                  {validCode ? (
+                    <Link href={`/company/${code}`} className="flex items-center justify-between py-1.5 px-2 rounded-xl hover:bg-zinc-800/40 text-sm text-zinc-300 hover:text-white transition-colors">
+                      <span className="truncate">{name}</span>
+                      <span className="text-rose-400/90 font-medium tabular-nums ml-2">₹{ltp.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+                    </Link>
+                  ) : (
+                    <div className="flex items-center justify-between py-1.5 px-2 text-sm text-zinc-500">
+                      <span className="truncate">{name}</span>
+                      <span className="tabular-nums ml-2">₹{ltp.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+                    </div>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
+  </div>
+)}
+
+{/* Quick links */}
+<div className="flex flex-col gap-2">
+  <Link href="/market/ipos" className="flex items-center gap-2 p-3 rounded-2xl bg-zinc-900/50 border border-zinc-800/50 hover:border-cyan-500/30 transition-all text-sm font-medium text-zinc-300 hover:text-white">
+    <FileText className="w-4 h-4 text-cyan-500" />
+    NSE IPOs (current & upcoming)
+  </Link>
+  <Link href="/result-calendar" className="flex items-center gap-2 p-3 rounded-2xl bg-zinc-900/50 border border-zinc-800/50 hover:border-cyan-500/30 transition-all text-sm font-medium text-zinc-300 hover:text-white">
+    <Calendar className="w-4 h-4 text-cyan-500" />
+    Result calendar
+  </Link>
+  <Link href="/indices" className="flex items-center gap-2 p-3 rounded-2xl bg-zinc-900/50 border border-zinc-800/50 hover:border-cyan-500/30 transition-all text-sm font-medium text-zinc-300 hover:text-white">
+    <BarChart3 className="w-4 h-4 text-cyan-500" />
+    BSE Indices
+  </Link>
+</div>
 
 <RiskRadar />
 </div>

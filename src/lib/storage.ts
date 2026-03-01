@@ -5,6 +5,7 @@ export const STORAGE_KEYS = {
   searchHistory: 'speedy-search-history',
   settings: 'speedy-settings',
   priceAlerts: 'speedy-price-alerts',
+  calendarPreferences: 'speedy-calendar-preferences',
 } as const
 
 export interface WatchlistGroup {
@@ -266,6 +267,8 @@ export function exportAllData(): string {
     watchlist: getWatchlist(),
     notes: getNotes(),
     priceAlerts: getPriceAlerts(),
+    watchlistGroups: getWatchlistGroups(),
+    calendarPreferences: getCalendarPreferences(),
     exportedAt: new Date().toISOString(),
   }, null, 2)
 }
@@ -277,6 +280,9 @@ export function importAllData(jsonString: string): boolean {
     if (data.notes) saveNotes(data.notes)
     if (data.priceAlerts) savePriceAlerts(data.priceAlerts)
     if (data.watchlistGroups) saveWatchlistGroups(data.watchlistGroups)
+    if (data.calendarPreferences) {
+      localStorage.setItem(STORAGE_KEYS.calendarPreferences, JSON.stringify(data.calendarPreferences))
+    }
     return true
   } catch {
     return false
@@ -352,11 +358,45 @@ export function moveToGroup(scripCode: string, groupId: string): WatchlistItem[]
 
 export function updateWatchlistItem(scripCode: string, updates: Partial<Omit<WatchlistItem, 'scripCode'>>): WatchlistItem[] {
   const current = getWatchlist()
-  const updated = current.map(item => 
+  const updated = current.map(item =>
     item.scripCode === scripCode ? { ...item, ...updates } : item
   )
   saveWatchlist(updated)
   return updated
+}
+
+// ─── Calendar preferences ─────────────────────────────────────────────────────
+
+export interface CalendarPreferences {
+  weekStartsOn: 0 | 1
+  timezone: string
+  calendarFilterWatchlistId: string | 'all'
+}
+
+const DEFAULT_CALENDAR_PREFS: CalendarPreferences = {
+  weekStartsOn: 1,
+  timezone: 'Asia/Kolkata',
+  calendarFilterWatchlistId: 'all',
+}
+
+export function getCalendarPreferences(): CalendarPreferences {
+  if (!isBrowser()) return DEFAULT_CALENDAR_PREFS
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.calendarPreferences)
+    if (data) {
+      const parsed = JSON.parse(data) as Partial<CalendarPreferences>
+      return { ...DEFAULT_CALENDAR_PREFS, ...parsed }
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_CALENDAR_PREFS
+}
+
+export function setCalendarPreferences(updates: Partial<CalendarPreferences>): void {
+  if (!isBrowser()) return
+  const current = getCalendarPreferences()
+  const next = { ...current, ...updates }
+  localStorage.setItem(STORAGE_KEYS.calendarPreferences, JSON.stringify(next))
+  window.dispatchEvent(new CustomEvent('calendar-preferences-updated', { detail: next }))
 }
 
 export const NOTE_TEMPLATES = {

@@ -118,8 +118,26 @@ export default function BulkDealsPage() {
       if (data.success) {
         if (data.fetched) {
           setFetchStatus(`Added ${data.added} new BSE deals`)
-          // Refresh deals after fetch
           await fetchDeals()
+        } else if (data.deals?.length && data.source === "nse-bse-api") {
+          setFetchStatus(data.message || "Showing NSE bulk deals for today")
+          const normalized = data.deals.map((d: any) => {
+            const rawType = (d.side || d.deal_type || d.type || "").toString().toUpperCase()
+            const side: "BUY" | "SELL" | string = rawType === "BUY" || rawType === "B" || rawType === "P" ? "BUY" : "SELL"
+            return {
+              date: d.date || d.deal_date || "",
+              scripCode: d.scripCode || d.scrip_code || "",
+              securityName: d.securityName || d.security_name || "",
+              clientName: d.clientName || d.client_name || "",
+              side,
+              quantity: d.quantity != null ? Number(d.quantity) : null,
+              price: d.price != null ? Number(d.price) : null,
+              type: rawType,
+              exchange: d.exchange || "nse",
+            }
+          })
+          setDeals(prev => [...normalized, ...prev])
+          saveDealToCache(normalized)
         } else {
           setFetchStatus(data.message || "Today's data already exists")
         }

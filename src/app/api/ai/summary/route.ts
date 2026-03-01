@@ -358,6 +358,7 @@ async function generateOpenAISummary(
       temperature: 0.15,
       response_format: { type: "json_object" }
     }),
+    signal: AbortSignal.timeout(45000), // 45s timeout for OpenAI
   })
 
   if (!response.ok) throw new Error(`OpenAI error: ${response.status}`)

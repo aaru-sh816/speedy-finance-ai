@@ -72,7 +72,6 @@ export function getDefaultFilters(): FilterState {
   const mm = String(today.getMonth() + 1).padStart(2, '0')
   const dd = String(today.getDate()).padStart(2, '0')
   const todayStr = `${yyyy}-${mm}-${dd}`
-  
   return {
     fromDate: todayStr,
     toDate: todayStr,
@@ -142,7 +141,13 @@ export function FilterModal({ isOpen, onClose, onApply, initialFilters }: Filter
   if (!isOpen) return null
 
   const handleReset = () => setFilters(getDefaultFilters())
-  const handleApply = () => { onApply(filters); onClose() }
+  const handleApply = () => {
+    const from = filters.fromDate
+    const to = filters.toDate
+    const normalized = from && to && from > to ? { ...filters, fromDate: to, toDate: from } : filters
+    onApply(normalized)
+    onClose()
+  }
 
   const toggleArrayItem = <T,>(arr: T[], item: T): T[] =>
     arr.includes(item) ? arr.filter((i) => i !== item) : [...arr, item]

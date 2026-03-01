@@ -23,10 +23,15 @@ import { DigitalClock } from "@/components/digital-clock"
 import { ShareMenu } from "@/components/share-menu"
 import { RiskAlert } from "@/components/sentiment-badge"
 import { DrivingEventBadge } from "@/components/driving-event-badge"
+import { FallbackAvatar } from "@/components/FallbackAvatar"
 import { InsiderGravity } from "@/components/insider-gravity"
 import { useWhaleDeals } from "@/hooks/useWhaleDeals"
 import { StockNotesPanel } from "@/components/stock-notes-panel"
+import { ResearchNoteContext } from "@/components/research-note-overlay"
 import { clsx } from "clsx"
+import { fetchWithTimeout } from "@/lib/fetch-with-timeout"
+import { CompanyFundamentals } from "@/components/company-fundamentals"
+import { ResearchNoteOverlay } from "@/components/research-note-overlay"
 
 function timeAgo(iso: string) {
   const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
@@ -104,6 +109,8 @@ interface CompanyData {
   lastPrice?: number | null
   tradingViewSymbol?: string | null
   restricted?: boolean
+  logoUrl?: string
+  logoUrlFallback?: string
 }
 
 interface Quote {
@@ -131,6 +138,7 @@ export default function CompanyPage() {
   const [company, setCompany] = useState<CompanyData | null>(null)
   const [announcements, setAnnouncements] = useState<BSEAnnouncement[]>([])
   const [corporateActions, setCorporateActions] = useState<any[]>([])
+  const [corporateActionsError, setCorporateActionsError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -150,7 +158,7 @@ export default function CompanyPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
   const [viewMode, setViewMode] = useState<'all' | 'bookmarks' | 'history'>('all')
-  const [activeTab, setActiveTab] = useState<'announcements' | 'corporate-actions'>('announcements')
+  const [activeTab, setActiveTab] = useState<'announcements' | 'corporate-actions' | 'fundamentals'>('announcements')
 
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
@@ -170,6 +178,28 @@ export default function CompanyPage() {
   const [kbdIndex, setKbdIndex] = useState(-1)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
+  const [companyLogoSrc, setCompanyLogoSrc] = useState<string | null>(null)
+
+    const researchContext: ResearchNoteContext | undefined = company ? {
+      scripCode,
+      symbol: company.symbol,
+      companyName: company.companyName,
+      currentPrice: quote?.price ?? undefined,
+      changePercent: quote?.changePercent ?? undefined,
+    } : undefined
+
+    const [overlayOpen, setOverlayOpen] = useState(false)
+    const [overlayContext, setOverlayContext] = useState<{ title?: string; content?: string; type?: "note" | "ai" }>({})
+
+    const openOverlay = useCallback((ctx: { title?: string; content?: string; type?: "note" | "ai" }) => {
+      setOverlayContext(ctx)
+      setOverlayOpen(true)
+    }, [])
+
+
+  useEffect(() => {
+    setCompanyLogoSrc(company?.logoUrl ?? null)
+  }, [company?.logoUrl])
 
   useEffect(() => {
     if (toast) {
@@ -223,14 +253,19 @@ export default function CompanyPage() {
     return { status: 'Open', label: 'Market Open', color: 'text-emerald-400', bg: 'bg-emerald-500/20' }
   }, [])
 
-  const fetchCompanyData = useCallback(async () => {
+  const fetchCompanyData = useCallback(async (signal?: AbortSignal) => {
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch(`/api/bse/company/${scripCode}`, { cache: "no-store" })
+      setCorporateActionsError(null)
+      const res = await fetchWithTimeout(`/api/bse/company/${scripCode}`, {
+        cache: "no-store",
+        timeoutMs: 20000,
+        signal,
+      })
       if (!res.ok) throw new Error("Failed to fetch company data")
       const data = await res.json()
-      
+
       setCompany({
         scripCode: data.scripCode,
         symbol: data.symbol || scripCode,
@@ -243,6 +278,8 @@ export default function CompanyPage() {
         lastPrice: data.lastPrice,
         tradingViewSymbol: data.tradingViewSymbol,
         restricted: data.restricted,
+        logoUrl: data.logoUrl,
+        logoUrlFallback: data.logoUrlFallback,
       })
 
       if (data.announcements) {
@@ -250,26 +287,48 @@ export default function CompanyPage() {
         if (!selectedId && data.announcements.length > 0) setSelectedId(data.announcements[0].id)
       }
 
-      const corpRes = await fetch(`/api/bse/corporate-actions?scripCode=${scripCode}`, { cache: "no-store" })
+      const corpRes = await fetchWithTimeout(`/api/bse/corporate-actions?scripCode=${scripCode}&pastDays=90&days=30`, {
+        cache: "no-store",
+        timeoutMs: 15000,
+        signal,
+      })
       if (corpRes.ok) {
         const corpData = await corpRes.json()
         setCorporateActions(corpData.actions || [])
+        setCorporateActionsError(null)
+      } else {
+        setCorporateActions([])
+        const errBody = await corpRes.json().catch(() => ({}))
+        setCorporateActionsError(errBody?.error || "Failed to load corporate actions")
       }
-    } catch (e: any) {
-      setError(e.message)
+    } catch (e: unknown) {
+      if ((e as Error)?.name === "AbortError") return
+      setError((e as Error)?.message ?? "Failed to load")
     } finally {
       setLoading(false)
     }
   }, [scripCode, selectedId])
 
   useEffect(() => {
-    fetchCompanyData()
+    const ctrl = new AbortController()
+    fetchCompanyData(ctrl.signal)
+    // Fallback: stop loading after 15s so user sees page (with error if fetch failed)
+    const timeoutId = setTimeout(() => {
+      setLoading(false)
+    }, 15000)
+    return () => {
+      ctrl.abort()
+      clearTimeout(timeoutId)
+    }
   }, [fetchCompanyData])
 
   const fetchCurrentQuote = useCallback(async (symbol: string, annId: string, annTime: string) => {
     setQuoteLoading(true)
     try {
-      const res = await fetch(`/api/bse/quote?symbol=${encodeURIComponent(scripCode)}`, { cache: "no-store" })
+      const res = await fetchWithTimeout(`/api/bse/quote?symbol=${encodeURIComponent(scripCode)}`, {
+        cache: "no-store",
+        timeoutMs: 10000,
+      })
       const d = await res.json()
       if (!d || d.error) return
 
@@ -435,13 +494,19 @@ export default function CompanyPage() {
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         <StockTicker stocks={tickerStocks} onStockClick={s => { setQuery(s); setShowSearchModal(true) }} />
 
+        {error && (
+          <div className="px-4 py-2 bg-rose-500/10 border-b border-rose-500/30 text-rose-400 text-sm" role="alert">
+            {error}
+          </div>
+        )}
+
         <header className="flex items-center justify-between gap-4 px-4 py-3 border-b border-white/5 bg-black/20">
           <div className="flex items-center gap-4">
             <button onClick={() => router.back()} className="p-1.5 rounded-lg hover:bg-white/5 text-zinc-500 hover:text-white transition-colors">
               <ArrowLeft className="h-4 w-4" />
             </button>
-            <h1 className="text-lg font-bold gradient-text truncate max-w-[200px] md:max-w-none">
-              {company?.companyName || "Company"}
+            <h1 className="text-lg font-bold gradient-text truncate max-w-[200px] md:max-w-none" title={company?.companyName}>
+              {company?.symbol || company?.companyName || "Company"}
             </h1>
             <DigitalClock />
           </div>
@@ -640,8 +705,39 @@ export default function CompanyPage() {
                           <span className="text-[10px] text-zinc-600 font-bold uppercase tracking-widest">BSE:{scripCode}</span>
                           <div className={clsx("px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest", market.bg, market.color)}>{market.label}</div>
                         </div>
-                        <h1 className="text-3xl md:text-4xl font-black tracking-tighter text-white">{company?.symbol}</h1>
-                        <p className="text-sm text-zinc-500 font-medium">{company?.companyName}</p>
+                        <div className="flex items-center gap-4">
+                          <div className="relative flex-shrink-0">
+                            <div className="absolute inset-0 w-14 h-14 -translate-x-1 -translate-y-1 bg-cyan-500/10 blur-xl rounded-full" aria-hidden />
+                            {companyLogoSrc ? (
+                            <div className="relative flex-shrink-0 rounded-full overflow-hidden border border-white/10 bg-zinc-800 hover:ring-1 hover:ring-white/20 transition-shadow w-12 h-12">
+                              <img
+                                src={companyLogoSrc}
+                                alt=""
+                                width={48}
+                                height={48}
+                                className="w-full h-full object-cover"
+                                loading="lazy"
+                                onError={() => {
+                                  setCompanyLogoSrc((prev) =>
+                                    company?.logoUrlFallback && prev === company.logoUrl
+                                      ? company.logoUrlFallback
+                                      : null
+                                  )
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <FallbackAvatar
+                              initial={company?.symbol || company?.companyName || scripCode}
+                              size={48}
+                            />
+                          )}
+                            </div>
+                          <div className="space-y-1 min-w-0 flex-1">
+                            <h1 className="text-3xl md:text-4xl font-black tracking-tighter text-white">{company?.symbol}</h1>
+                            <p className="text-sm text-zinc-500 font-medium">{company?.companyName}</p>
+                          </div>
+                        </div>
                         
                         {/* Quote Info Row */}
                         {quote && quote.price != null && (
@@ -739,7 +835,7 @@ export default function CompanyPage() {
                 </div>
 
                 <div className="flex items-center gap-2 border-b border-white/5">
-                  {['announcements', 'corporate-actions'].map(tab => (
+                  {['announcements', 'corporate-actions', 'fundamentals'].map(tab => (
                     <button key={tab} onClick={() => setActiveTab(tab as any)} className={clsx("relative px-6 py-3 text-[10px] font-black tracking-[0.2em] uppercase transition-all", activeTab === tab ? "text-cyan-400" : "text-zinc-600 hover:text-zinc-400")}>
                       {tab.replace('-', ' ')}
                       {activeTab === tab && <motion.div layoutId="activeTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.8)]" />}
@@ -747,7 +843,18 @@ export default function CompanyPage() {
                   ))}
                 </div>
 
-                {activeTab === 'announcements' ? (
+                    {activeTab === 'fundamentals' ? (
+                      <div className="space-y-12">
+                        <CompanyFundamentals 
+                          scripCode={scripCode} 
+                          marketCapFallback={quote?.marketCap} 
+                          onNoteAction={openOverlay}
+                        />
+
+                      </div>
+                    ) : activeTab === 'announcements' ? (
+
+
                   <>
                     <RiskAlert text={selected.headline} />
                     <AISummaryPanel 
@@ -1094,7 +1201,8 @@ export default function CompanyPage() {
                         scripCode={scripCode} 
                         symbol={company?.symbol || scripCode} 
                         companyName={company?.companyName || ''} 
-                        currentPrice={quote?.price ?? undefined} 
+                        currentPrice={quote?.price ?? undefined}
+                        changePercent={quote?.changePercent ?? undefined}
                       />
 
                       {/* Company Profile */}
@@ -1132,7 +1240,13 @@ export default function CompanyPage() {
                   </>
                 ) : (
                   <div className="space-y-4">
-                    {corporateActions.length === 0 ? (
+                    {corporateActionsError ? (
+                      <div className="glass-card rounded-2xl p-6 text-center border border-amber-500/20 bg-amber-500/5">
+                        <AlertTriangle className="h-10 w-10 mx-auto mb-3 text-amber-400" />
+                        <p className="text-sm font-semibold text-amber-200 mb-1">Could not load corporate actions</p>
+                        <p className="text-xs text-zinc-400">{corporateActionsError}</p>
+                      </div>
+                    ) : corporateActions.length === 0 ? (
                       <div className="glass-card rounded-2xl p-12 text-center text-zinc-600">
                         <Calendar className="h-12 w-12 mx-auto mb-4 opacity-10" />
                         <p className="text-xs font-black uppercase tracking-[0.3em]">NO ACTIONS FOUND</p>
@@ -1178,6 +1292,15 @@ export default function CompanyPage() {
       <FilterModal isOpen={showFilterModal} onClose={() => setShowFilterModal(false)} onApply={setFilters} initialFilters={filters} />
       <SearchModal isOpen={showSearchModal} onClose={() => setShowSearchModal(false)} onSelectStock={s => { router.push(`/company/${s.scripCode}`); setShowSearchModal(false) }} />
       {selected && <SpeedyPipChat announcement={selected} isOpen={showChat} onClose={() => { setShowChat(false); setSelectedForChat([]); setOpenChatMaximized(false) }} companyAnnouncements={announcements} preSelectedDocIds={selectedForChat} initialMaximized={openChatMaximized} />}
+      
+        <ResearchNoteOverlay 
+          isOpen={overlayOpen}
+          onClose={() => { setOverlayOpen(false); setOverlayContext({}) }}
+          context={researchContext}
+          initialTitle={overlayContext.title}
+          initialContent={overlayContext.content}
+        />
+
     </div>
   )
 }

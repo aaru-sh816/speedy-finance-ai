@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { getNseBulkDealsFromApi } from "@/lib/nse-bse/unified-market"
 
 export const dynamic = "force-dynamic"
 
@@ -27,8 +28,9 @@ interface BaselineCache {
   }
 }
 
-async function fetchQuote(scripCode: string): Promise<any> {
-  const bseServiceUrl = process.env.BSE_SERVICE_URL || "http://localhost:8080"
+/** Fetch quote from Python BSE service */
+async function fetchQuotePython(scripCode: string): Promise<any> {
+  const bseServiceUrl = process.env.BSE_SERVICE_URL || "http://localhost:5000"
   try {
     const res = await fetch(`${bseServiceUrl}/api/quote/${scripCode}`, {
       signal: AbortSignal.timeout(10000),
@@ -39,6 +41,32 @@ async function fetchQuote(scripCode: string): Promise<any> {
     }
   } catch (e) {
     console.error(`Quote fetch failed for ${scripCode}:`, e)
+  }
+  return null
+}
+
+/** Fetch quote from app's own API (nse-bse-api); use when Python is down (e.g. NSE fallback deals). */
+async function fetchQuoteViaApp(origin: string, symbol: string): Promise<any> {
+  try {
+    const res = await fetch(`${origin}/api/bse/quote?symbol=${encodeURIComponent(symbol)}`, {
+      signal: AbortSignal.timeout(10000),
+    })
+    if (res.ok) {
+      const data = await res.json()
+      return {
+        currentValue: data.price,
+        ltp: data.price,
+        lastPrice: data.price,
+        previousClose: data.previousClose,
+        prevClose: data.previousClose,
+        dayHigh: data.dayHigh,
+        dayLow: data.dayLow,
+        totalTradedQuantity: data.volume,
+        volume: data.volume,
+      }
+    }
+  } catch (e) {
+    console.error(`App quote fetch failed for ${symbol}:`, e)
   }
   return null
 }
@@ -64,41 +92,56 @@ function isMarketHours(): boolean {
 export async function GET(request: NextRequest) {
   try {
     const yesterdayDate = getYesterdayDate()
-    const bseServiceUrl = process.env.BSE_SERVICE_URL || "http://localhost:8080"
-    
+    const yesterdayDateObj = new Date(yesterdayDate + "T12:00:00Z")
+    const origin = request.nextUrl?.origin || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+    let deals: any[] = []
+    let useNseFallback = false
+
+    const bseServiceUrl = process.env.BSE_SERVICE_URL || "http://localhost:5000"
     const dealsRes = await fetch(
       `${bseServiceUrl}/api/bulk-deals/database?start=${yesterdayDate}&end=${yesterdayDate}`,
       { signal: AbortSignal.timeout(30000) }
-    )
-    
-    if (!dealsRes.ok) {
-      return NextResponse.json({ error: "Failed to fetch yesterday's deals" }, { status: 500 })
+    ).catch(() => null)
+
+    if (dealsRes?.ok) {
+      const dealsData = await dealsRes.json()
+      deals = dealsData.deals || []
     }
-    
-    const dealsData = await dealsRes.json()
-    const deals: any[] = dealsData.deals || []
-    
+
+    if (deals.length === 0) {
+      const nseDeals = await getNseBulkDealsFromApi(yesterdayDateObj, yesterdayDateObj)
+      deals = nseDeals.map((d: any) => {
+        const rawDate = d.date ?? d.Date
+        const dateStr = rawDate ? String(rawDate).replace(/(\d{2})-(\d{2})-(\d{4})/, "$3-$2-$1") : yesterdayDate
+        return {
+          date: dateStr,
+          scripCode: d.symbol ?? d.Symbol ?? "",
+          securityName: d.securityName ?? d.Symbol ?? d.symbol ?? "",
+          clientName: d.clientName ?? d.ClientName ?? "",
+          side: (d.dealType ?? d.BuySell ?? "").toString(),
+          quantity: Number(d.quantity ?? d.Quantity ?? 0),
+          price: Number(d.price ?? d.Price ?? 0),
+          exchange: "nse",
+        }
+      })
+      useNseFallback = true
+    }
+
     if (deals.length === 0) {
       return NextResponse.json({
         success: true,
         deals: [],
-        summary: {
-          totalDeals: 0,
-          moversUp: 0,
-          moversDown: 0,
-          avgChange: 0,
-          topGainer: null,
-          topLoser: null,
-        },
+        summary: { totalDeals: 0, moversUp: 0, moversDown: 0, avgChange: 0, topGainer: null, topLoser: null },
         isMarketHours: isMarketHours(),
         yesterdayDate,
       })
     }
-    
-    const uniqueScripCodes = [...new Set(deals.map(d => d.scripCode))]
-    
-    const quotePromises = uniqueScripCodes.map(code => 
-      fetchQuote(code).then(quote => ({ code, quote }))
+
+    const uniqueScripCodes = [...new Set(deals.map(d => d.scripCode).filter(Boolean))]
+    const quotePromises = uniqueScripCodes.map(code =>
+      useNseFallback
+        ? fetchQuoteViaApp(origin, code).then(quote => ({ code, quote }))
+        : fetchQuotePython(code).then(quote => ({ code, quote }))
     )
     const quoteResults = await Promise.all(quotePromises)
     const quotesMap = new Map<string, any>()

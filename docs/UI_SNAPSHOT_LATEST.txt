@@ -1,0 +1,25 @@
+﻿==========================================
+UI SNAPSHOT VERIFICATION - 2026-02-18 21:28:22
+Base: http://localhost:3000
+==========================================
+1. Home /          : OK (HTTP 200)
+2. Market /market  : OK (HTTP 200)
+3. API market-movers : OK (count=392)
+4. API advance-decline: OK
+5. API near-52week   : OK
+6. API corporate-actions: OK (actions=0)
+7. Page corporate-actions: OK
+8. API result-calendar: OK
+9. Page result-calendar: OK
+10. API announcements  : OK
+11. Page announcements  : OK
+12. API quote (BSE)     : OK price=1441.25 source=google-bom
+13. API bulk-deals hist: OK count=0
+14. Page bulk-deals    : OK
+15. Page company/500325: OK
+16. API indices        : OK
+17. Page indices       : OK
+18. API enhanced-quote : FAIL
+19. API NSE IPOs      : OK (current=1 upcoming=5)
+20. Page market/ipos  : OK
+==========================================

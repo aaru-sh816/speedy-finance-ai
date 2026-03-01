@@ -95,7 +95,8 @@ export function MarketDepth({ scripCode, currentPrice, realDepth, className = ""
     if (!realDepth) return null;
     return (
       <div className={`p-4 rounded-xl border border-white/5 bg-white/5 text-center ${className}`}>
-        <p className="text-xs text-zinc-500">Waiting for live market depth feed...</p>
+        <p className="text-xs text-zinc-500">Waiting for live market depth feed.</p>
+        <p className="text-[10px] text-zinc-600 mt-1">Depth requires BSE Python service (BSE_SERVICE_URL). Quote and 52W range use nse-bse-api.</p>
       </div>
     )
   }

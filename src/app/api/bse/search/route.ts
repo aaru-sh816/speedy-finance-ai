@@ -1,19 +1,7 @@
 import { NextResponse } from "next/server"
+import { getBseLookupFromApi, getBseListSecuritiesFromApi } from "@/lib/nse-bse/unified-market"
 
 export const dynamic = "force-dynamic"
-
-// BSE API for equity list (JSON format) - WORKING!
-// segment=Equity returns ~1.6MB, segment=Equity%20T%2B1 returns ~4.3MB
-const BSE_EQUITY_LIST = "https://api.bseindia.com/BseIndiaAPI/api/ListofScripData/w?segment=Equity&status=Active"
-
-// BSE API endpoint
-const BSE_BASE_URL = "https://www.bseindia.com"
-
-const BSE_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-  "Accept": "*/*",
-  "Referer": "https://www.bseindia.com/corporates/List_Scrips.html",
-}
 
 // In-memory cache for BSE scrip list
 let bseScripCache: ParsedStock[] = []
@@ -103,57 +91,33 @@ const STOCK_DATABASE: ParsedStock[] = [
 ];
 
 /**
- * Fetch all BSE scrips from official API
- * Returns list of all active equity stocks
+ * Fetch BSE scrip list via nse-bse-api (unified-market). No direct BSE URL.
  */
 async function fetchBSEScripList(): Promise<ParsedStock[]> {
-  // Return cached data if still valid
   if (bseScripCache.length > 0 && Date.now() - cacheTimestamp < CACHE_DURATION) {
-    console.log(`[BSE] Using cached scrip list (${bseScripCache.length} stocks)`)
     return bseScripCache
   }
 
   try {
-    console.log("[BSE] Fetching full scrip list from BSE API...")
-    
-    const response = await fetch(BSE_EQUITY_LIST, {
-      method: "GET",
-      headers: BSE_HEADERS,
-      cache: "no-store",
-    })
+    const rows = await getBseListSecuritiesFromApi({ segment: "Equity", status: "Active" })
+    const stocks: ParsedStock[] = rows
+      .map((row) => ({
+        symbol: row.symbol || row.scripcode || "",
+        name: row.companyname || "",
+        isin: row.isin || "",
+        scripCode: row.scripcode || "",
+        exchange: "BSE" as const,
+        type: "stock" as const,
+      }))
+      .filter((s) => s.name && s.scripCode)
 
-    if (!response.ok) {
-      console.error(`[BSE] Scrip list API error: ${response.status}`)
-      return STOCK_DATABASE
+    if (stocks.length > 0) {
+      bseScripCache = stocks
+      cacheTimestamp = Date.now()
     }
-
-    const data = await response.json()
-    
-    if (!Array.isArray(data)) {
-      console.error("[BSE] Unexpected response format")
-      return STOCK_DATABASE
-    }
-
-    // Parse the BSE response - Format from API:
-    // { SCRIP_CD, Scrip_Name, Status, GROUP, FACE_VALUE, ISIN_NUMBER, INDUSTRY, scrip_id, Segment, NSURL, Issuer_Name }
-    const stocks: ParsedStock[] = data.map((item: any) => ({
-      symbol: item.scrip_id || item.SCRIP_CD || "",
-      name: item.Scrip_Name || item.Issuer_Name || "",
-      isin: item.ISIN_NUMBER || "",
-      scripCode: String(item.SCRIP_CD || ""),
-      exchange: "BSE" as const,
-      type: "stock" as const,
-    })).filter((s: ParsedStock) => s.name && s.scripCode)
-
-    console.log(`[BSE] Loaded ${stocks.length} scrips from BSE API`)
-    
-    // Update cache
-    bseScripCache = stocks
-    cacheTimestamp = Date.now()
-    
-    return stocks
-  } catch (error: any) {
-    console.error("[BSE] Failed to fetch scrip list:", error.message)
+    return stocks.length > 0 ? stocks : STOCK_DATABASE
+  } catch (error: unknown) {
+    console.error("[BSE] Failed to fetch scrip list:", (error as Error).message)
     return STOCK_DATABASE
   }
 }
@@ -216,12 +180,17 @@ function searchLocalDatabase(query: string): ParsedStock[] {
 }
 
 
+const MAX_QUERY_LENGTH = 100
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const query = searchParams.get("q")?.trim()
   
   if (!query || query.length < 1) {
-    return NextResponse.json({ results: [], error: "Query too short" })
+    return NextResponse.json({ results: [], error: "Query too short" }, { status: 400 })
+  }
+  if (query.length > MAX_QUERY_LENGTH) {
+    return NextResponse.json({ results: [], error: "Query too long" }, { status: 400 })
   }
   
   console.log(`[Search] Searching for: "${query}"`)
@@ -231,7 +200,19 @@ export async function GET(request: Request) {
     const bseScrips = await fetchBSEScripList()
     
     if (bseScrips.length === 0) {
-      console.error("[Search] BSE scrip list is empty, using fallback")
+      console.error("[Search] BSE scrip list is empty, trying nse-bse-api lookup")
+      const lookupRow = await getBseLookupFromApi(query)
+      if (lookupRow?.symbol && lookupRow?.bse_code) {
+        const one: ParsedStock = {
+          symbol: String(lookupRow.symbol).toUpperCase(),
+          name: String(lookupRow.company_name ?? lookupRow.symbol),
+          isin: String(lookupRow.isin ?? ""),
+          scripCode: String(lookupRow.bse_code),
+          exchange: "BSE",
+          type: "stock",
+        }
+        return NextResponse.json({ results: [one], count: 1, query, source: "nse-bse-api" })
+      }
       const localResults = searchLocalDatabase(query)
       return NextResponse.json({ 
         results: localResults,
@@ -258,8 +239,18 @@ export async function GET(request: Request) {
     
   } catch (error: any) {
     console.error("[Search] Error:", error.message)
-    
-    // Emergency fallback to local database
+    const lookupRow = await getBseLookupFromApi(query)
+    if (lookupRow?.symbol && lookupRow?.bse_code) {
+      const one: ParsedStock = {
+        symbol: String(lookupRow.symbol).toUpperCase(),
+        name: String(lookupRow.company_name ?? lookupRow.symbol),
+        isin: String(lookupRow.isin ?? ""),
+        scripCode: String(lookupRow.bse_code),
+        exchange: "BSE",
+        type: "stock",
+      }
+      return NextResponse.json({ results: [one], count: 1, query, source: "nse-bse-api-fallback" })
+    }
     const localResults = searchLocalDatabase(query)
     return NextResponse.json({ 
       results: localResults,

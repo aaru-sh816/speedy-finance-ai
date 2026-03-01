@@ -1,4 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
+import {
+  getBseQuoteFromApi,
+  getBse52WeekFromApi,
+  getBseMarketCapFromApi,
+  getNseQuoteFromApi,
+} from "@/lib/nse-bse/unified-market"
+import { fetchBseCompanyHeader } from "@/lib/bse/company-header"
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 45
@@ -102,8 +109,123 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  // First try NSE for non-numeric symbols (likely NSE tickers)
+  const parseNumber = (val: any): number | null => {
+    if (val == null || val === "") return null
+    if (typeof val === "number") return isNaN(val) ? null : val
+    if (typeof val === "string") {
+      const cleaned = val.replace(/,/g, "").replace(/[^\d.-]/g, "").trim()
+      const num = parseFloat(cleaned)
+      return isNaN(num) ? null : num
+    }
+    return null
+  }
+
+  // BSE scrip codes: use nse-bse-api only; enrich with 52-week and marketCap (listSecurities + ComHeader fallback)
+  if (isBseScripCode(symbol)) {
+    const [bseApiQuote, week52, companyHeader, mcapFromList] = await Promise.all([
+      getBseQuoteFromApi(symbol),
+      getBse52WeekFromApi(symbol),
+      fetchBseCompanyHeader(symbol),
+      getBseMarketCapFromApi(symbol),
+    ])
+    if (bseApiQuote) {
+      let marketCap = parseNumber(companyHeader?.marketCap) ?? mcapFromList ?? null
+      let volume = bseApiQuote.volume
+
+      // If marketCap/volume still missing, try Python service (optional)
+      if ((marketCap == null || volume == null) && process.env.BSE_SERVICE_URL) {
+        try {
+          const bseServiceUrl = process.env.BSE_SERVICE_URL
+          const res = await fetch(`${bseServiceUrl}/api/quote/${encodeURIComponent(symbol)}`, {
+            cache: "no-store",
+            headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(3000),
+          })
+          if (res.ok) {
+            const json = await res.json()
+            if (json.success && json.data) {
+              const data = json.data
+              marketCap = marketCap ?? parseNumber(data.marketCapFull ?? data.marketCapFreeFloat ?? data.marketCap ?? data.mktCap)
+              volume = volume ?? parseNumber(data.totalTradedQuantity ?? data.volume ?? data.totalTradedVolume)
+            }
+          }
+        } catch (_) {}
+      }
+
+      return NextResponse.json({
+        symbol: bseApiQuote.symbol,
+        price: bseApiQuote.price,
+        change: bseApiQuote.change,
+        changePercent: bseApiQuote.changePercent,
+        volume,
+        dayHigh: bseApiQuote.dayHigh,
+        dayLow: bseApiQuote.dayLow,
+        previousClose: bseApiQuote.previousClose,
+        fiftyTwoWeekHigh: week52?.fifty2WeekHigh ?? null,
+        fiftyTwoWeekLow: week52?.fifty2WeekLow ?? null,
+        marketCap: marketCap ?? bseApiQuote.marketCap ?? null,
+        timestamp: new Date().toISOString(),
+        source: "nse-bse-api",
+      })
+    }
+    // Optional: try Python service if configured
+    try {
+      const bseServiceUrl = process.env.BSE_SERVICE_URL || 'http://localhost:5000'
+      const res = await fetch(`${bseServiceUrl}/api/quote/${encodeURIComponent(symbol)}`, {
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(10000),
+      })
+      if (res.ok) {
+        const json = await res.json()
+        if (json.success && json.data) {
+          const data = json.data
+          return NextResponse.json({
+            symbol: symbol.toUpperCase(),
+            price: parseNumber(data.currentValue ?? data.lastPrice ?? data.ltp ?? data.price),
+            change: parseNumber(data.change),
+            changePercent: parseNumber(data.pChange ?? data.percentChange),
+            volume: parseNumber(data.totalTradedQuantity ?? data.volume ?? data.totalTradedVolume),
+            dayHigh: parseNumber(data.dayHigh ?? data.high),
+            dayLow: parseNumber(data.dayLow ?? data.low),
+            previousClose: parseNumber(data.previousClose ?? data.prevClose),
+            fiftyTwoWeekHigh: parseNumber(data.weekHigh52 ?? data.fiftyTwoWeekHigh),
+            fiftyTwoWeekLow: parseNumber(data.weekLow52 ?? data.fiftyTwoWeekLow),
+            marketCap: parseNumber(data.marketCapFull ?? data.marketCapFreeFloat ?? data.marketCap ?? data.mktCap),
+            timestamp: new Date().toISOString(),
+            source: "bse-python",
+          })
+        }
+      }
+    } catch (_) {}
+    const googleQuote = await tryGoogleFinance(symbol)
+    if (googleQuote) return NextResponse.json(googleQuote)
+    return NextResponse.json(
+      { error: "Failed to fetch BSE quote", symbol },
+      { status: 404 }
+    )
+  }
+
+  // NSE path: try nse-bse-api then direct NSE then Google
   if (!isBseScripCode(symbol)) {
+    // Try nse-bse-api NSE quote (direct, no external service)
+    const nseApiQuote = await getNseQuoteFromApi(symbol)
+    if (nseApiQuote) {
+      return NextResponse.json({
+        symbol: nseApiQuote.symbol,
+        price: nseApiQuote.price,
+        change: nseApiQuote.change,
+        changePercent: nseApiQuote.changePercent,
+        volume: nseApiQuote.volume,
+        dayHigh: nseApiQuote.dayHigh,
+        dayLow: nseApiQuote.dayLow,
+        previousClose: nseApiQuote.previousClose,
+        fiftyTwoWeekHigh: nseApiQuote.fiftyTwoWeekHigh,
+        fiftyTwoWeekLow: nseApiQuote.fiftyTwoWeekLow,
+        timestamp: new Date().toISOString(),
+        source: "nse-bse-api",
+      })
+    }
     const nseQuote = await tryNseQuote(symbol)
     if (nseQuote) {
       return NextResponse.json(nseQuote)
@@ -114,191 +236,15 @@ export async function GET(request: NextRequest) {
     if (googleQuote) {
       return NextResponse.json(googleQuote)
     }
-  }
-
-    try {
-      const bseServiceUrl = process.env.BSE_SERVICE_URL || 'http://localhost:8080'
-      const res = await fetch(`${bseServiceUrl}/api/quote/${encodeURIComponent(symbol)}`, {
-        cache: 'no-store',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        signal: AbortSignal.timeout(10000), // 10 second timeout
-      })
-
-      if (!res.ok) {
-        throw new Error(`BSE service returned ${res.status}`)
-      }
-
-      const json = await res.json()
-
-
-      if (!json.success) {
-        throw new Error(json.error || 'BSE quote response unsuccessful')
-      }
-
-      const data = json.data || {}
-
-    const price =
-      data.currentValue ??
-      data.lastPrice ??
-      data.ltp ??
-      data.price ??
-      null
-
-    const change = data.change ?? null
-    const changePercent = data.pChange ?? data.percentChange ?? null
-
-    const volume =
-      data.totalTradedQuantity ??
-      data.volumeTradedToday ??
-      data.volume ??
-      data.totalTradedVolume ??
-      null
-
-    const dayHigh = data.dayHigh ?? data.high ?? null
-    const dayLow = data.dayLow ?? data.low ?? null
-
-    let marketCap =
-      data.marketCapFull ??
-      data.marketCapFreeFloat ??
-      data.marketCap ??
-      data.mktCap ??
-      null
-
-    // Fallback for market cap if missing and it's a BSE code
-    if (marketCap == null && isBseScripCode(symbol)) {
-      try {
-        const bseServiceUrl = process.env.BSE_SERVICE_URL || 'http://localhost:8080'
-        // Correct endpoint in app.py is /api/company/<scrip_code>
-        const headerRes = await fetch(`${bseServiceUrl}/api/company/${symbol}`, {
-          cache: 'no-store',
-          signal: AbortSignal.timeout(3000)
-        })
-        if (headerRes.ok) {
-          const headerJson = await headerRes.json()
-          if (headerJson.success && headerJson.data?.quote) {
-            const q = headerJson.data.quote
-            marketCap = q.marketCapFull || q.marketCapFreeFloat || q.marketCap || q.mktCap || null
-          }
-        }
-      } catch (e) {
-        // Ignore header fallback error
-      }
-    }
-
-    // Secondary fallback using direct BSE ScripHeaderData API
-    if (marketCap == null && isBseScripCode(symbol)) {
-      try {
-        const bseHeaderUrl = `https://api.bseindia.com/BseIndiaAPI/api/getScripHeaderData/w?scripcode=${symbol}`
-        const directHeaderRes = await fetch(bseHeaderUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': 'https://www.bseindia.com/',
-          },
-          cache: 'no-store',
-          signal: AbortSignal.timeout(3000)
-        })
-        if (directHeaderRes.ok) {
-          const hData = await directHeaderRes.json()
-          // Extract MCap from BSE header data - usually in 'MktCapFull' or 'MktCapFF'
-          marketCap = hData.MktCapFull || hData.MktCapFF || hData.CurrMktCap || null
-        }
-      } catch (e) {}
-    }
-
-    const parseNumber = (val: any) => {
-      if (val == null || val === '') return null
-      if (typeof val === 'number') return val
-      if (typeof val === 'string') {
-        const cleaned = val.replace(/,/g, '').replace(/[^\d.-]/g, '').trim()
-        const num = parseFloat(cleaned)
-        return isNaN(num) ? null : num
-      }
-      return null
-    }
-
-    // Transform to match existing Quote interface
-    return NextResponse.json({
-      symbol: symbol.toUpperCase(),
-      price: parseNumber(price),
-      change: parseNumber(change),
-      changePercent: parseNumber(changePercent),
-      volume: parseNumber(volume),
-      dayHigh: parseNumber(dayHigh),
-      dayLow: parseNumber(dayLow),
-      marketCap: parseNumber(marketCap),
-      open: parseNumber(data.previousOpen ?? data.open),
-      previousClose: parseNumber(data.previousClose ?? data.prevClose),
-        fiftyTwoWeekHigh: parseNumber(data.weekHigh52 ?? data.fiftyTwoWeekHigh ?? data['52weekHigh'] ?? data['52WeekHigh']),
-        fiftyTwoWeekLow: parseNumber(data.weekLow52 ?? data.fiftyTwoWeekLow ?? data['52weekLow'] ?? data['52WeekLow']),
-      timestamp: new Date().toISOString(),
-      raw: data
-    })
-    } catch (error: any) {
-      if (error.name === 'AbortError' || error.name === 'TimeoutError' || error.message.includes('BSE service returned')) {
-        // Reduced noise: log as info instead of warn for common timeouts
-        console.info(`Quote API issue for ${symbol}, trying fallbacks: ${error.message}`)
-        
-        // Try direct BSE API as fallback
-        try {
-          const bseDirectUrl = `https://api.bseindia.com/BseIndiaAPI/api/StockTrading/w?flag=&quotetype=EQ&scripcode=${encodeURIComponent(symbol)}`
-          const directRes = await fetch(bseDirectUrl, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Referer': 'https://www.bseindia.com/',
-              'Accept': 'application/json',
-            },
-            cache: 'no-store',
-            signal: AbortSignal.timeout(5000),
-          })
-          
-          if (directRes.ok) {
-            const directData = await directRes.json()
-            if (directData && (directData.CurrRate || directData.LTP)) {
-              return NextResponse.json({
-                symbol: symbol.toUpperCase(),
-                price: Number(directData.CurrRate || directData.LTP || 0),
-                change: Number(directData.Change || 0),
-                changePercent: Number(directData.PcntChange || directData.PercentChange || 0),
-                volume: Number(directData.TradQnty || directData.Volume || 0),
-                dayHigh: Number(directData.High || 0),
-                dayLow: Number(directData.Low || 0),
-                previousClose: Number(directData.PrevClose || directData.YesterdayClose || 0),
-                timestamp: new Date().toISOString(),
-                source: 'bse-direct'
-              })
-            }
-          }
-        } catch (e) {
-          // Silent fallback failure
-        }
-        
-        // Final fallback: try Google Finance
-        const googleQuote = await tryGoogleFinance(symbol)
-        if (googleQuote) {
-          return NextResponse.json(googleQuote)
-        }
-      }
-
-      if (error.name === 'AbortError' || error.name === 'TimeoutError') {
-        return NextResponse.json(
-          { error: "Request timeout", symbol },
-          { status: 504 }
-        )
-      }
-      
-      // Log as warning instead of error for individual quote failures
-      console.warn(`Quote API error for ${symbol}:`, error.message || error)
-
     return NextResponse.json(
-      { 
-        error: "Failed to fetch quote",
-        message: error?.message,
-        symbol 
-      },
-      { status: 500 }
+      { error: "Failed to fetch quote", symbol },
+      { status: 404 }
     )
   }
+
+  return NextResponse.json(
+    { error: "Failed to fetch quote", symbol },
+    { status: 404 }
+  )
 }
 

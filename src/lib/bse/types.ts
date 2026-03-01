@@ -63,7 +63,7 @@ export type BSEAnnouncement = {
   impact: BSEImpact
   time: string // ISO string
   pdfUrl: string | null
-  source: "BSE"
+  source: "BSE" | "FinEdge"
   tags: string[]
   isCritical: boolean
   // Additional fields for enhanced UI

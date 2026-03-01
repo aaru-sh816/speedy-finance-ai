@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { Search, Filter, Calendar, BadgePercent, Gift, Scissors, ArrowDownCircle, AlertTriangle, RefreshCw, Globe } from "lucide-react"
+import { fetchWithTimeout } from "@/lib/fetch-with-timeout"
 
 interface CorporateAction {
   id: string
@@ -17,6 +18,7 @@ interface CorporateAction {
   paymentDate?: string
   dividendAmount?: number
   ratio?: string
+  source?: "bse" | "finedge"
 }
 
 function clsx(...v: (string | false | undefined)[]) { return v.filter(Boolean).join(" ") }
@@ -37,17 +39,81 @@ export default function CorporateActionsPage() {
   const [type, setType] = useState<string>("")
   const [actions, setActions] = useState<CorporateAction[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const fetchActions = async () => {
     setLoading(true)
+    setError(null)
     try {
       const params = new URLSearchParams()
+      params.set("days", "90")
       if (scripCode) params.set("scripCode", scripCode)
       if (type) params.set("type", type)
-      const res = await fetch(`/api/bse/corporate-actions?${params.toString()}`)
-      const data = await res.json()
-      setActions(data.actions || [])
-    } catch {
+
+      const toDate = new Date()
+      const fromDate = new Date()
+      fromDate.setDate(fromDate.getDate() - 90)
+      const fromStr = fromDate.toISOString().slice(0, 10)
+      const toStr = toDate.toISOString().slice(0, 10)
+
+      const [bseRes, finedgeRes] = await Promise.all([
+        fetchWithTimeout(`/api/bse/corporate-actions?${params.toString()}`, { timeoutMs: 20000 }),
+        fetchWithTimeout(`/api/finedge/corporate-actions?from_date=${fromStr}&to_date=${toStr}${scripCode ? `&symbol=${encodeURIComponent(scripCode)}` : ""}`, { timeoutMs: 15000 }).catch(() => null),
+      ])
+
+      const bseData = await bseRes.json()
+      let bseActions: CorporateAction[] = []
+      if (bseRes.ok) {
+        bseActions = (bseData.actions || []).map((a: CorporateAction) => ({ ...a, source: "bse" as const }))
+      } else {
+        setError(bseData.error || `Failed to load BSE (${bseRes.status})`)
+      }
+
+      let finedgeActions: CorporateAction[] = []
+      if (finedgeRes?.ok) {
+        const feData = await finedgeRes.json()
+        const feList = Array.isArray(feData) ? feData : []
+        finedgeActions = feList
+          .map((x: { action?: string; ex_date?: string; symbol?: string; subject?: string; amount?: number; adj_amount?: number; dividend_type?: string }): CorporateAction | null => {
+            const purposeType = (x.action || "").toLowerCase().includes("dividend") ? "dividend"
+              : (x.action || "").toLowerCase().includes("bonus") ? "bonus"
+              : (x.action || "").toLowerCase().includes("split") ? "split"
+              : (x.action || "").toLowerCase().includes("right") ? "rights"
+              : "other"
+            if (type && purposeType !== type) return null
+            const amt = x.amount ?? x.adj_amount
+            return {
+              id: `fe_${x.symbol}_${x.ex_date}_${x.action}_${Date.now()}`,
+              scripCode: x.symbol ?? "",
+              shortName: "",
+              longName: x.symbol ?? "",
+              purpose: x.subject ?? (x.action ?? ""),
+              purposeType,
+              exDate: x.ex_date ?? "",
+              dividendAmount: amt != null ? Number(amt) : undefined,
+              source: "finedge",
+            }
+          })
+          .filter((a): a is CorporateAction => a != null)
+      }
+
+      const seen = new Set<string>()
+      const merged = [...bseActions]
+      for (const a of finedgeActions) {
+        const key = `${(a.scripCode || a.longName).toUpperCase()}_${a.exDate}_${a.purposeType}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          merged.push(a)
+        }
+      }
+      merged.sort((a, b) => {
+        const da = new Date(a.exDate).getTime()
+        const db = new Date(b.exDate).getTime()
+        return db - da
+      })
+      setActions(merged)
+    } catch (e) {
+      setError((e as Error)?.message ?? "Failed to load corporate actions")
       setActions([])
     } finally {
       setLoading(false)
@@ -104,6 +170,10 @@ export default function CorporateActionsPage() {
           </div>
         </header>
 
+        {error && (
+          <p className="text-rose-400 text-sm mb-4" role="alert">{error}</p>
+        )}
+
         <div className="bg-zinc-900/20 backdrop-blur-3xl border border-zinc-800/30 rounded-[2.5rem] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -113,13 +183,14 @@ export default function CorporateActionsPage() {
                   <th className="text-left py-5 px-8 text-xs font-black text-zinc-500 uppercase tracking-widest">Purpose</th>
                   <th className="text-left py-5 px-8 text-xs font-black text-zinc-500 uppercase tracking-widest">Ex-Date</th>
                   <th className="text-left py-5 px-8 text-xs font-black text-zinc-500 uppercase tracking-widest">Record</th>
+                  <th className="text-left py-5 px-8 text-xs font-black text-zinc-500 uppercase tracking-widest">Source</th>
                   <th className="text-left py-5 px-8 text-xs font-black text-zinc-500 uppercase tracking-widest">Details</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/30">
                 {loading ? (
                   <tr>
-                    <td colSpan={5} className="py-32 text-center text-zinc-500">
+                    <td colSpan={6} className="py-32 text-center text-zinc-500">
                       <div className="flex flex-col items-center gap-4">
                         <RefreshCw className="h-8 w-8 animate-spin text-cyan-500" />
                         <span className="text-sm font-bold tracking-widest uppercase">Syncing Events...</span>
@@ -128,7 +199,7 @@ export default function CorporateActionsPage() {
                   </tr>
                 ) : filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-32 text-center">
+                    <td colSpan={6} className="py-32 text-center">
                       <div className="space-y-2">
                         <p className="text-zinc-400 font-bold tracking-tight">No corporate actions found</p>
                         <p className="text-xs text-zinc-600">Try adjusting your filters or search criteria</p>
@@ -159,6 +230,13 @@ export default function CorporateActionsPage() {
                         </div>
                       </td>
                       <td className="py-6 px-8 text-sm font-medium text-zinc-500">{a.recordDate || '-'}</td>
+                      <td className="py-6 px-8">
+                        {a.source === "finedge" ? (
+                          <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 text-[10px] font-bold uppercase">FinEdge</span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded bg-zinc-700/50 text-zinc-400 text-[10px] font-bold uppercase">BSE</span>
+                        )}
+                      </td>
                       <td className="py-6 px-8">
                         <div className="flex items-center gap-4">
                           {a.dividendAmount != null && (
