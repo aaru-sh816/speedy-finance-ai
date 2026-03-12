@@ -1,8 +1,8 @@
 "use client"
 
-import { useMemo } from "react"
-import { Sparkline } from "@/components/sparkline"
-import { TrendingUp, TrendingDown, Info, PenSquare, ArrowUpRight, ArrowDownRight } from "lucide-react"
+import { useState, useMemo } from "react"
+import { MiniBarChart } from "@/components/mini-bar-chart"
+import { PenSquare, ArrowUpRight, ArrowDownRight } from "lucide-react"
 import { clsx } from "clsx"
 
 interface FinancialRow {
@@ -38,23 +38,15 @@ function cagr(v0: number, v1: number, years: number): number | null {
   return Number.isFinite(rate) ? rate * 100 : null
 }
 
-function formatValue(val: number) {
-  const abs = Math.abs(val)
-  let result = ""
-  let unit = ""
-  
-  if (abs >= 1e7) {
-    result = (val / 1e7).toFixed(2)
-    unit = "Cr"
-  } else if (abs >= 1e5) {
-    result = (val / 1e5).toFixed(2)
-    unit = "L"
-  } else {
-    result = val.toFixed(2)
-  }
+function formatCr(val: number): string {
+  if (!Number.isFinite(val)) return "—"
+  const cr = val / 1e7
+  return cr.toLocaleString("en-IN", { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + " Cr"
+}
 
-  const [main, decimal] = result.split(".")
-  return { main, decimal: decimal ? `.${decimal}` : "", unit }
+function formatEps(val: number): string {
+  if (!Number.isFinite(val)) return "—"
+  return Number(val).toFixed(1)
 }
 
 export function FinancialSummaryCards({
@@ -62,21 +54,27 @@ export function FinancialSummaryCards({
   cfAnnual,
   onNoteAction,
 }: FinancialSummaryCardsProps) {
-  const sorted = useMemo(() => 
-    [...plAnnual].sort((a, b) => {
-      const yA = Number(a.year ?? a.header ?? 0)
-      const yB = Number(b.year ?? b.header ?? 0)
-      return yB - yA
-    })
-  , [plAnnual])
+  const [inflationAdj, setInflationAdj] = useState(false)
 
-  const cfSorted = useMemo(() => 
-    [...cfAnnual].sort((a, b) => {
-      const yA = Number(a.year ?? a.header ?? 0)
-      const yB = Number(b.year ?? b.header ?? 0)
-      return yB - yA
-    })
-  , [cfAnnual])
+  const sorted = useMemo(
+    () =>
+      [...plAnnual].sort((a, b) => {
+        const yA = Number(a.year ?? a.header ?? 0)
+        const yB = Number(b.year ?? b.header ?? 0)
+        return yB - yA
+      }),
+    [plAnnual]
+  )
+
+  const cfSorted = useMemo(
+    () =>
+      [...cfAnnual].sort((a, b) => {
+        const yA = Number(a.year ?? a.header ?? 0)
+        const yB = Number(b.year ?? b.header ?? 0)
+        return yB - yA
+      }),
+    [cfAnnual]
+  )
 
   if (sorted.length === 0) return null
 
@@ -86,64 +84,82 @@ export function FinancialSummaryCards({
   const metrics = useMemo(() => {
     const rev = Number(latest?.revenueFromOperations ?? latest?.sales ?? 0)
     const prevRev = Number(prev?.revenueFromOperations ?? prev?.sales ?? 0)
-    const opInc = Number(latest?.operatingProfit ?? latest?.ebit ?? latest?.ebitda ?? 0)
-    const prevOpInc = Number(prev?.operatingProfit ?? prev?.ebit ?? prev?.ebitda ?? 0)
-    const pat = Number(latest?.profitLossForPeriod ?? 0)
-    const prevPat = Number(prev?.profitLossForPeriod ?? 0)
-    const eps = Number(latest?.EPS ?? latest?.eps ?? 0)
-    const prevEps = Number(prev?.EPS ?? prev?.eps ?? 0)
-    const opCf = Number(cfSorted[0]?.cashFromOperatingActivity ?? 0)
-    const prevOpCf = Number(cfSorted[1]?.cashFromOperatingActivity ?? 0)
+    const opInc = Number(latest?.operatingProfit ?? latest?.ebit ?? latest?.ebitda ?? latest?.operatingIncome ?? 0)
+    const prevOpInc = Number(prev?.operatingProfit ?? prev?.ebit ?? prev?.ebitda ?? prev?.operatingIncome ?? 0)
+    const pat = Number(latest?.profitLossForPeriod ?? latest?.netIncome ?? 0)
+    const prevPat = Number(prev?.profitLossForPeriod ?? prev?.netIncome ?? 0)
+    const eps = Number(latest?.EPS ?? latest?.eps ?? latest?.dilutedEps ?? 0)
+    const prevEps = Number(prev?.EPS ?? prev?.eps ?? prev?.dilutedEps ?? 0)
+    const opCf = Number(cfSorted[0]?.cashFromOperatingActivity ?? cfSorted[0]?.netCashFlowFromOperatingActivities ?? cfSorted[0]?.operatingCashFlow ?? cfSorted[0]?.cashOperating ?? 0)
+    const prevOpCf = Number(cfSorted[1]?.cashFromOperatingActivity ?? cfSorted[1]?.netCashFlowFromOperatingActivities ?? cfSorted[1]?.operatingCashFlow ?? cfSorted[1]?.cashOperating ?? 0)
 
-    const revHistory = sorted.map(r => Number(r.revenueFromOperations ?? r.sales ?? 0)).reverse()
-    const opHistory = sorted.map(r => Number(r.operatingProfit ?? r.ebit ?? r.ebitda ?? 0)).reverse()
-    const patHistory = sorted.map(r => Number(r.profitLossForPeriod ?? 0)).reverse()
-    const epsHistory = sorted.map(r => Number(r.EPS ?? r.eps ?? 0)).reverse()
-    const cfHistory = cfSorted.map(r => Number(r.cashFromOperatingActivity ?? 0)).reverse()
+    const revHistory = [...sorted].reverse().map((r) => Number(r.revenueFromOperations ?? r.sales ?? 0))
+    const opHistory = [...sorted].reverse().map((r) => Number(r.operatingProfit ?? r.ebit ?? r.ebitda ?? r.operatingIncome ?? 0))
+    const patHistory = [...sorted].reverse().map((r) => Number(r.profitLossForPeriod ?? r.netIncome ?? 0))
+    const epsHistory = [...sorted].reverse().map((r) => Number(r.EPS ?? r.eps ?? r.dilutedEps ?? 0))
+    const cfHistory = [...cfSorted].reverse().map((r) => Number(r.cashFromOperatingActivity ?? r.netCashFlowFromOperatingActivities ?? r.operatingCashFlow ?? r.cashOperating ?? 0))
 
-    const getYoY = (curr: number, prevVal: number) => prevVal && prevVal !== 0 ? ((curr - prevVal) / Math.abs(prevVal)) * 100 : null
-    
+    const getYoY = (curr: number, prevVal: number) =>
+      prevVal && prevVal !== 0 ? ((curr - prevVal) / Math.abs(prevVal)) * 100 : null
+
+    const yearLabels = [...sorted].reverse().map((r) => String(r.year ?? r.header ?? ""))
+    const cfYearLabels = [...cfSorted].reverse().map((r) => String(r.year ?? r.header ?? ""))
+
     return [
       {
-        label: "Revenue",
-        ...formatValue(rev),
+        label: "REVENUE",
+        valueStr: formatCr(rev),
         yoy: getYoY(rev, prevRev),
         cagr3: sorted.length >= 4 ? cagr(Number(sorted[3]?.revenueFromOperations ?? sorted[3]?.sales ?? 0), rev, 3) : null,
         cagr5: sorted.length >= 6 ? cagr(Number(sorted[5]?.revenueFromOperations ?? sorted[5]?.sales ?? 0), rev, 5) : null,
+        histAvg: revHistory.length ? revHistory.reduce((a, b) => a + b, 0) / revHistory.length : null,
         history: revHistory,
+        yearLabels,
+        formatChart: formatCr,
       },
       {
-        label: "Op. Income",
-        ...formatValue(opInc),
+        label: "OPERATING INCOME",
+        valueStr: formatCr(opInc),
         yoy: getYoY(opInc, prevOpInc),
         cagr3: sorted.length >= 4 ? cagr(Number(sorted[3]?.operatingProfit ?? sorted[3]?.ebit ?? sorted[3]?.ebitda ?? 0), opInc, 3) : null,
         cagr5: sorted.length >= 6 ? cagr(Number(sorted[5]?.operatingProfit ?? sorted[5]?.ebit ?? sorted[5]?.ebitda ?? 0), opInc, 5) : null,
+        histAvg: opHistory.length ? opHistory.reduce((a, b) => a + b, 0) / opHistory.length : null,
         history: opHistory,
+        yearLabels,
+        formatChart: formatCr,
       },
       {
-        label: "Net Income",
-        ...formatValue(pat),
+        label: "NET INCOME",
+        valueStr: formatCr(pat),
         yoy: getYoY(pat, prevPat),
         cagr3: sorted.length >= 4 ? cagr(Number(sorted[3]?.profitLossForPeriod ?? 0), pat, 3) : null,
         cagr5: sorted.length >= 6 ? cagr(Number(sorted[5]?.profitLossForPeriod ?? 0), pat, 5) : null,
+        histAvg: patHistory.length ? patHistory.reduce((a, b) => a + b, 0) / patHistory.length : null,
         history: patHistory,
+        yearLabels,
+        formatChart: formatCr,
       },
       {
         label: "EPS",
-        ...formatValue(eps),
+        valueStr: formatEps(eps),
         yoy: getYoY(eps, prevEps),
         cagr3: sorted.length >= 4 ? cagr(Number(sorted[3]?.EPS ?? sorted[3]?.eps ?? 0), eps, 3) : null,
         cagr5: sorted.length >= 6 ? cagr(Number(sorted[5]?.EPS ?? sorted[5]?.eps ?? 0), eps, 5) : null,
+        histAvg: epsHistory.length ? epsHistory.reduce((a, b) => a + b, 0) / epsHistory.length : null,
         history: epsHistory,
-        noCr: true
+        yearLabels,
+        formatChart: formatEps,
       },
       {
-        label: "Cash Flow",
-        ...formatValue(opCf),
+        label: "OP. CASH FLOW",
+        valueStr: formatCr(opCf),
         yoy: getYoY(opCf, prevOpCf),
         cagr3: cfSorted.length >= 4 ? cagr(Number(cfSorted[3]?.cashFromOperatingActivity ?? 0), opCf, 3) : null,
         cagr5: cfSorted.length >= 6 ? cagr(Number(cfSorted[5]?.cashFromOperatingActivity ?? 0), opCf, 5) : null,
+        histAvg: cfHistory.length ? cfHistory.reduce((a, b) => a + b, 0) / cfHistory.length : null,
         history: cfHistory,
+        yearLabels: cfYearLabels,
+        formatChart: formatCr,
       },
     ]
   }, [latest, prev, sorted, cfSorted])
@@ -153,111 +169,145 @@ export function FinancialSummaryCards({
       <div className="flex items-center justify-between px-1">
         <h3 className="text-[11px] font-black tracking-[0.25em] uppercase text-zinc-600 flex items-center gap-2.5">
           <div className="w-1.5 h-1.5 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.4)]" />
-          FINANCIAL PERFORMANCE
-          <span className="text-[9px] font-black text-zinc-700 tracking-normal ml-2">FY{latest.year ?? latest.header}</span>
+          FINANCIALS
         </h3>
-        <div className="hidden md:flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-emerald-500/20 flex items-center justify-center">
-              <div className="w-1 h-1 rounded-full bg-emerald-500" />
-            </div>
-            <span className="text-[9px] font-black text-zinc-500 tracking-widest uppercase">GROWTH</span>
+        <button
+          onClick={() => setInflationAdj(!inflationAdj)}
+          className={clsx(
+            "px-3 py-1.5 text-[9px] font-black tracking-wider uppercase rounded-lg border transition-all",
+            inflationAdj
+              ? "bg-cyan-500/20 border-cyan-500/50 text-cyan-400"
+              : "bg-white/5 border-white/10 text-zinc-500 hover:text-zinc-400"
+          )}
+        >
+          INFLATION ADJ.
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        {metrics.map((m) => (
+          <MetricCard key={m.label} m={m} onNoteAction={onNoteAction} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MetricCard({
+  m,
+  onNoteAction,
+}: {
+  m: any
+  onNoteAction?: (context: { title: string; content: string; type: "note" | "ai" }) => void
+}) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+
+  // Determine what value to show: hovered or latest (which is the last item in the history array since it's reversed chronologically for the chart)
+  const displayValue = hoveredIndex !== null
+    ? m.history[hoveredIndex]
+    : m.history[m.history.length - 1] ?? 0
+
+  // Format the display value
+  const displayValueStr = m.formatChart ? m.formatChart(displayValue) : formatCr(displayValue)
+
+  // Determine what year label to show
+  const displayYear = hoveredIndex !== null && m.yearLabels[hoveredIndex]
+    ? m.yearLabels[hoveredIndex]
+    : "LATEST"
+
+  return (
+    <div className="group relative bg-[#0a0a0a]/60 backdrop-blur-2xl p-5 flex flex-col justify-between transition-all duration-500 hover:bg-[#0f0f11]/80 hover:shadow-[0_8px_30px_rgba(34,211,238,0.12)] border border-white/10 hover:border-cyan-500/30 rounded-2xl overflow-hidden shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] hover:-translate-y-1">
+      <div className="flex justify-between items-start mb-4 relative z-20">
+        <span className="text-[10px] md:text-[11px] font-black text-zinc-400 tracking-[0.2em] uppercase flex items-center gap-2">
+          {m.label}
+          {hoveredIndex !== null && (
+            <span className="bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded text-[9px] animate-in fade-in zoom-in duration-200 shadow-[0_0_10px_rgba(34,211,238,0.2)]">
+              {displayYear}
+            </span>
+          )}
+        </span>
+        {m.yoy != null && hoveredIndex === null && (
+          <div
+            className={clsx(
+              "flex items-center gap-0.5 px-2 py-1 rounded-md text-[10px] font-black transition-all border shadow-sm",
+              m.yoy >= 0
+                ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20 shadow-emerald-500/10"
+                : "text-rose-400 bg-rose-500/10 border-rose-500/20 shadow-rose-500/10"
+            )}
+          >
+            {m.yoy >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+            {m.yoy >= 0 ? "+" : ""}
+            {m.yoy.toFixed(1)}%
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-cyan-500/20 flex items-center justify-center">
-              <div className="w-1 h-1 rounded-full bg-cyan-500" />
+        )}
+      </div>
+
+      <div className="flex items-end justify-between relative z-10">
+        {/* Left Side: Numbers and Stats */}
+        <div className="flex flex-col gap-3 w-[55%]">
+          <button
+            onClick={() =>
+              onNoteAction?.({
+                title: `Metric: ${m.label}`,
+                content: `Detailed analysis of ${m.label}: Current value is ${m.valueStr}. YoY growth is ${m.yoy?.toFixed(1) ?? "—"}%.`,
+                type: "note",
+              })
+            }
+            className="flex items-baseline text-left hover:scale-[1.02] transition-transform origin-left group/value"
+          >
+            <span className={clsx(
+              "text-3xl sm:text-4xl font-black tabular-nums tracking-tighter transition-colors duration-300 drop-shadow-md",
+              hoveredIndex !== null ? "text-cyan-400 drop-shadow-[0_0_15px_rgba(34,211,238,0.4)]" : "text-white"
+            )}>
+              {displayValueStr.replace(" Cr", "")}
+            </span>
+            <span className="text-xs sm:text-sm font-bold text-zinc-500 ml-1">
+              {m.label === "EPS" ? "" : "Cr"}
+            </span>
+            <PenSquare className="h-3 w-3 ml-2 text-cyan-500 opacity-0 group-hover/value:opacity-100 transition-opacity" />
+          </button>
+
+          <div className="flex flex-col gap-1.5 mt-1">
+            <div className="flex items-center gap-3">
+              <span className={clsx("text-[9px] font-bold tabular-nums flex items-center gap-1 transition-opacity duration-200", hoveredIndex !== null ? "opacity-30" : "opacity-100")}>
+                <span className="text-zinc-500">3Y</span>
+                <span className={m.cagr3 != null && m.cagr3 >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                  {m.cagr3 != null ? `${m.cagr3 >= 0 ? "+" : ""}${m.cagr3.toFixed(0)}%` : "—"}
+                </span>
+              </span>
+              <span className={clsx("text-[9px] font-bold tabular-nums flex items-center gap-1 transition-opacity duration-200", hoveredIndex !== null ? "opacity-30" : "opacity-100")}>
+                <span className="text-zinc-500">5Y</span>
+                <span className={m.cagr5 != null && m.cagr5 >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                  {m.cagr5 != null ? `${m.cagr5 >= 0 ? "+" : ""}${m.cagr5.toFixed(0)}%` : "—"}
+                </span>
+              </span>
             </div>
-            <span className="text-[9px] font-black text-zinc-500 tracking-widest uppercase">TRENDLINE</span>
+            <p className={clsx(
+              "text-[9px] font-bold text-zinc-500 transition-opacity duration-200 flex gap-1",
+              hoveredIndex !== null ? "opacity-30" : "opacity-100"
+            )}>
+              HIST AVG <span className="text-zinc-300 ml-0.5">{m.histAvg != null ? (m.label === "EPS" ? formatEps(m.histAvg) : formatCr(m.histAvg).replace(" Cr", "")) : "—"}</span>
+            </p>
           </div>
+        </div>
+
+        {/* Right Side: Mini Bar Chart */}
+        <div className="w-[45%] h-[60px] sm:h-[70px] flex justify-end items-end relative z-0">
+          <MiniBarChart
+            data={m.history}
+            labels={m.yearLabels}
+            width={120}
+            height={70}
+            color={m.yoy != null && m.yoy >= 0 ? "#10b981" : "#f43f5e"}
+            formatValue={m.formatChart ?? ((v: number) => v.toLocaleString("en-IN"))}
+            onHoverChange={setHoveredIndex}
+          />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-px bg-white/5 border border-white/5 rounded-3xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
-        {metrics.map((m) => (
-          <div
-            key={m.label}
-            className="group relative bg-zinc-950/80 p-6 flex flex-col justify-between transition-all duration-500 hover:bg-zinc-900/60"
-          >
-            <div className="space-y-4">
-              {/* Header */}
-              <div className="flex justify-between items-start">
-                <span className="text-[10px] font-black text-zinc-500 tracking-[0.15em] uppercase group-hover:text-zinc-300 transition-colors">
-                  {m.label}
-                </span>
-                {m.yoy != null && (
-                  <div className={clsx(
-                    "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black transition-all",
-                    m.yoy >= 0 ? "text-emerald-400 bg-emerald-500/10" : "text-rose-400 bg-rose-500/10"
-                  )}>
-                    {m.yoy >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                    {m.yoy >= 0 ? "+" : ""}{m.yoy.toFixed(1)}%
-                  </div>
-                )}
-              </div>
-
-              {/* Value */}
-              <button 
-                onClick={() => onNoteAction?.({
-                  title: `Metric: ${m.label}`,
-                  content: `Detailed analysis of ${m.label}: Current value is ${m.main}${m.decimal}${m.unit}. YoY growth is ${m.yoy?.toFixed(1)}%.`,
-                  type: "note"
-                })}
-                className="flex items-baseline text-left hover:scale-[1.02] transition-transform origin-left group/value"
-              >
-                <span className="text-3xl font-black text-white tabular-nums tracking-tighter">
-                  {m.main}
-                </span>
-                <span className="text-sm font-bold text-zinc-600 ml-0.5 tabular-nums">
-                  {m.decimal}
-                </span>
-                <span className="text-[10px] font-black text-zinc-500 ml-1.5 uppercase tracking-widest opacity-60">
-                  {m.unit}
-                </span>
-                <PenSquare className="h-3 w-3 ml-2 text-cyan-500 opacity-0 group-hover/value:opacity-100 transition-opacity" />
-              </button>
-
-              {/* Stats Grid */}
-              <div className="grid grid-cols-2 gap-4 pt-2">
-                <div className="space-y-1">
-                  <p className="text-[8px] font-black text-zinc-700 tracking-widest uppercase">CAGR (3Y)</p>
-                  <p className={clsx(
-                    "text-xs font-black tabular-nums",
-                    m.cagr3 != null && m.cagr3 >= 0 ? "text-emerald-400" : "text-rose-400"
-                  )}>
-                    {m.cagr3 != null ? `${m.cagr3 >= 0 ? "+" : ""}${m.cagr3.toFixed(1)}%` : "—"}
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-[8px] font-black text-zinc-700 tracking-widest uppercase">CAGR (5Y)</p>
-                  <p className={clsx(
-                    "text-xs font-black tabular-nums",
-                    m.cagr5 != null && m.cagr5 >= 0 ? "text-emerald-400" : "text-rose-400"
-                  )}>
-                    {m.cagr5 != null ? `${m.cagr5 >= 0 ? "+" : ""}${m.cagr5.toFixed(1)}%` : "—"}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Sparkline & Overlay */}
-            <div className="mt-8 relative h-12 w-full flex items-end">
-              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-10 transition-opacity">
-                <span className="text-[8px] font-black tracking-[0.4em] uppercase text-white">HISTORICAL TREND</span>
-              </div>
-              <Sparkline 
-                data={m.history} 
-                width={160} 
-                height={40} 
-                color={m.yoy != null && m.yoy >= 0 ? "#10b981" : "#f43f5e"}
-                strokeWidth={3}
-              />
-            </div>
-
-            {/* Accent Bar */}
-            <div className="absolute bottom-0 left-0 h-1 w-0 bg-cyan-500 transition-all duration-700 group-hover:w-full" />
-          </div>
-        ))}
-      </div>
+      {/* Glassmorphism Shine Effect */}
+      <div className="absolute inset-0 bg-gradient-to-tr from-white/[0.02] via-transparent to-white/[0.08] opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
+      <div className="absolute -inset-px rounded-3xl border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" style={{ maskImage: 'linear-gradient(to bottom, #fff, transparent)' }} />
     </div>
   )
 }

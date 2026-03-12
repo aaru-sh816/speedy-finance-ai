@@ -3,19 +3,19 @@
 // AI Summary Panel
 import { useState, useEffect, useRef } from "react"
 import { clsx } from "clsx"
-import { 
-  type VerdictType, 
-  type AISummary, 
-  getVerdictColor, 
-  getVerdictLabel, 
+import {
+  type VerdictType,
+  type AISummary,
+  getVerdictColor,
+  getVerdictLabel,
   getVerdictIcon,
   getVerdictBgColor,
 } from "@/lib/ai/verdict"
 import { getCategoryEmoji, getKeywordEmoji } from "@/lib/ai/summaryFormatter"
 import type { BSEImpact } from "@/lib/bse/types"
 import { getMarketStatus } from "@/lib/bse/market-hours"
-import { 
-  RefreshCw, FileText, Sparkles, CheckCircle, XCircle, Loader2, Maximize2, 
+import {
+  RefreshCw, FileText, Sparkles, CheckCircle, XCircle, Loader2, Maximize2,
   TrendingUp, TrendingDown, Zap, HelpCircle, ChevronUp, ChevronDown,
   BarChart2, Share2, PenSquare
 } from "lucide-react"
@@ -92,17 +92,17 @@ export function AISummaryPanel({
   subCategory,
   announcementId,
   pdfUrl,
-    onVerdictGenerated,
-    time,
-    ticker,
-    scripCode,
-    company,
-    impact,
-    onFullScreenChat,
-    quote,
-    onNoteAction,
-  }: AISummaryPanelProps) {
-    const [aiSummary, setAiSummary] = useState<AISummary | null>(null)
+  onVerdictGenerated,
+  time,
+  ticker,
+  scripCode,
+  company,
+  impact,
+  onFullScreenChat,
+  quote,
+  onNoteAction,
+}: AISummaryPanelProps) {
+  const [aiSummary, setAiSummary] = useState<AISummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [pdfUsed, setPdfUsed] = useState(false)
@@ -115,22 +115,22 @@ export function AISummaryPanel({
   const [realDepth, setRealDepth] = useState<any>(null)
   const [isMarketOpen, setIsMarketOpen] = useState(true)
   const [depthFetchFailed, setDepthFetchFailed] = useState(false)
-    const [marketDepthUserExpanded, setMarketDepthUserExpanded] = useState(false)
-    const streamRef = useRef<EventSource | null>(null)
+  const [marketDepthUserExpanded, setMarketDepthUserExpanded] = useState(false)
+  const streamRef = useRef<EventSource | null>(null)
 
-    const handleResearch = () => {
-      if (!aiSummary || !onNoteAction) return
-      onNoteAction({
-        title: `AI Analysis: ${ticker || company}`,
-        content: `### AI Verdict: ${getVerdictLabel(aiSummary.verdict.type)} (${aiSummary.verdict.confidence}%)\n\n` +
-          `#### Summary\n${aiSummary.simpleSummary.replace(/<[^>]*>?/gm, '')}\n\n` +
-          `#### Key Insights\n${aiSummary.keyInsights.map(i => "- " + i).join("\n")}\n\n` +
-          `#### Risk Factors\n${(aiSummary.riskFactors || []).map(r => "- " + r).join("\n")}`,
-        type: "ai"
-      })
-    }
+  const handleResearch = () => {
+    if (!aiSummary || !onNoteAction) return
+    onNoteAction({
+      title: `AI Analysis: ${ticker || company}`,
+      content: `### AI Verdict: ${getVerdictLabel(aiSummary.verdict.type)} (${aiSummary.verdict.confidence}%)\n\n` +
+        `#### Summary\n${aiSummary.simpleSummary.replace(/<[^>]*>?/gm, '')}\n\n` +
+        `#### Key Insights\n${aiSummary.keyInsights.map(i => "- " + i).join("\n")}\n\n` +
+        `#### Risk Factors\n${(aiSummary.riskFactors || []).map(r => "- " + r).join("\n")}`,
+      type: "ai"
+    })
+  }
 
-    // Check market hours
+  // Check market hours
   useEffect(() => {
     const checkMarketHours = () => {
       const status = getMarketStatus();
@@ -160,7 +160,7 @@ export function AISummaryPanel({
           }
           throw new Error(`HTTP error! status: ${res.status}`)
         }
-        
+
         const json = await res.json()
         if (json.success && json.data) {
           setRealDepth({
@@ -196,67 +196,67 @@ export function AISummaryPanel({
 
   const mdToHtml = (s: string) => {
     let t = escapeHtml(s || "")
-    
+
     // Handle markdown tables
     const tableRegex = /\|(.+)\|\n\|[-:\s|]+\|\n((?:\|.+\|\n?)+)/g
     t = t.replace(tableRegex, (match, header, body) => {
       const headers = header.split('|').map((h: string) => h.trim()).filter(Boolean)
-      const rows = body.trim().split('\n').map((row: string) => 
+      const rows = body.trim().split('\n').map((row: string) =>
         row.split('|').map((cell: string) => cell.trim()).filter(Boolean)
       )
-      
+
       let table = '<div class="overflow-x-auto my-3"><table class="w-full text-xs border-collapse">'
       table += '<thead><tr class="border-b border-white/10">'
-    headers.forEach((h: string) => {
-      table += `<th class="px-3 py-2 text-left text-zinc-100 font-semibold bg-white/5">${h}</th>`
-    })
-    table += '</tr></thead><tbody>'
-    rows.forEach((row: string[]) => {
-      table += '<tr class="border-b border-white/5 hover:bg-white/10 transition-colors">'
-      row.forEach((cell: string) => {
-        // Highlight positive/negative values
-        let cellClass = "px-3 py-2 text-zinc-200"
-        if (cell.includes('+') || cell.toLowerCase().includes('positive') || cell.toLowerCase().includes('strong')) {
-          cellClass += " text-emerald-400 font-medium"
-        } else if (cell.includes('-') && !cell.includes('Not') || cell.toLowerCase().includes('negative') || cell.toLowerCase().includes('weak')) {
-          cellClass += " text-rose-400 font-medium"
-        }
-        table += `<td class="${cellClass}">${cell}</td>`
+      headers.forEach((h: string) => {
+        table += `<th class="px-3 py-2 text-left text-zinc-100 font-semibold bg-white/5">${h}</th>`
       })
-      table += '</tr>'
+      table += '</tr></thead><tbody>'
+      rows.forEach((row: string[]) => {
+        table += '<tr class="border-b border-white/5 hover:bg-white/10 transition-colors">'
+        row.forEach((cell: string) => {
+          // Highlight positive/negative values
+          let cellClass = "px-3 py-2 text-zinc-200"
+          if (cell.includes('+') || cell.toLowerCase().includes('positive') || cell.toLowerCase().includes('strong')) {
+            cellClass += " text-emerald-400 font-medium"
+          } else if (cell.includes('-') && !cell.includes('Not') || cell.toLowerCase().includes('negative') || cell.toLowerCase().includes('weak')) {
+            cellClass += " text-rose-400 font-medium"
+          }
+          table += `<td class="${cellClass}">${cell}</td>`
+        })
+        table += '</tr>'
+      })
+      table += '</tbody></table></div>'
+      return table
     })
-    table += '</tbody></table></div>'
-    return table
-  })
-  
-  // Handle headers
-  t = t.replace(/^### (.+)$/gm, '<h4 class="text-base font-bold text-white mt-6 mb-3 tracking-tight">$1</h4>')
-  t = t.replace(/^## (.+)$/gm, '<h3 class="text-lg font-bold text-white mt-8 mb-4 tracking-tight border-b border-white/10 pb-2">$1</h3>')
-  
-  // Handle emoji headers like 📊 **TITLE**:
-  t = t.replace(/([\u{1F300}-\u{1F9FF}])\s*\*\*([^*]+)\*\*:?/gu, '<div class="flex items-center gap-2 mt-6 mb-3"><span class="text-xl">$1</span><span class="text-base font-bold text-white tracking-tight">$2</span></div>')
-  
-  // Handle bullet points
-  t = t.replace(/^- \*\*([^*]+)\*\*:?\s*(.*)$/gm, '<div class="flex items-start gap-3 my-2.5"><div class="w-1.5 h-1.5 rounded-full bg-cyan-500/50 mt-2 flex-shrink-0" /><span><strong class="text-white font-semibold">$1:</strong> <span class="text-zinc-100">$2</span></span></div>')
-  t = t.replace(/^- (.+)$/gm, '<div class="flex items-start gap-3 my-2.5"><div class="w-1.5 h-1.5 rounded-full bg-zinc-700 mt-2 flex-shrink-0" /><span class="text-zinc-100">$1</span></div>')
-  
-  // Standard markdown
-  t = t.replace(/\*\*(.+?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
-  t = t.replace(/\*(.+?)\*/g, '<em class="text-zinc-200">$1</em>')
-  t = t.replace(/`(.+?)`/g, '<code class="px-1.5 py-0.5 rounded bg-white/10 text-cyan-300 font-mono text-xs">$1</code>')
 
-    
+    // Handle headers
+    t = t.replace(/^### (.+)$/gm, '<h4 class="text-base font-bold text-white mt-6 mb-3 tracking-tight">$1</h4>')
+    t = t.replace(/^## (.+)$/gm, '<h3 class="text-lg font-bold text-white mt-8 mb-4 tracking-tight border-b border-white/10 pb-2">$1</h3>')
+
+    // Handle emoji headers like 📊 **TITLE**:
+    t = t.replace(/([\u{1F300}-\u{1F9FF}])\s*\*\*([^*]+)\*\*:?/gu, '<div class="flex items-center gap-2 mt-6 mb-3"><span class="text-xl">$1</span><span class="text-base font-bold text-white tracking-tight">$2</span></div>')
+
+    // Handle bullet points
+    t = t.replace(/^- \*\*([^*]+)\*\*:?\s*(.*)$/gm, '<div class="flex items-start gap-3 my-2.5"><div class="w-1.5 h-1.5 rounded-full bg-cyan-500/50 mt-2 flex-shrink-0" /><span><strong class="text-white font-semibold">$1:</strong> <span class="text-zinc-100">$2</span></span></div>')
+    t = t.replace(/^- (.+)$/gm, '<div class="flex items-start gap-3 my-2.5"><div class="w-1.5 h-1.5 rounded-full bg-zinc-700 mt-2 flex-shrink-0" /><span class="text-zinc-100">$1</span></div>')
+
+    // Standard markdown
+    t = t.replace(/\*\*(.+?)\*\*/g, '<strong class="text-white font-bold">$1</strong>')
+    t = t.replace(/\*(.+?)\*/g, '<em class="text-zinc-200">$1</em>')
+    t = t.replace(/`(.+?)`/g, '<code class="px-1.5 py-0.5 rounded bg-white/10 text-cyan-300 font-mono text-xs">$1</code>')
+
+
     // Handle line breaks (but not inside tables)
     t = t.replace(/\n\n/g, '<br/><br/>')
     t = t.replace(/\n/g, '<br/>')
-    
+
     return t
   }
 
   useEffect(() => {
     generateSummary(false)
     return () => {
-      try { streamRef.current?.close() } catch {}
+      try { streamRef.current?.close() } catch { }
       streamRef.current = null
     }
   }, [announcementId, headline])
@@ -267,24 +267,24 @@ export function AISummaryPanel({
     }
     setLoading(true)
     setAnalysisStatus(pdfUrl ? "fetching_pdf" : "analyzing")
-    
+
     try {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 60000) // 60s timeout
       const response = await fetch("/api/ai/summary", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            headline,
-            summary,
-            category,
-            subCategory,
-            pdfUrl,
-            announcementId,
-            forceRefresh,
-          }),
-          signal: controller.signal,
-        })
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          headline,
+          summary,
+          category,
+          subCategory,
+          pdfUrl,
+          announcementId,
+          forceRefresh,
+        }),
+        signal: controller.signal,
+      })
       clearTimeout(timeoutId)
 
       if (response.ok) {
@@ -303,7 +303,7 @@ export function AISummaryPanel({
         setPdfUsed(enhanced.pdfAnalyzed || false)
         setSource(enhanced.source || "rule-based")
         setAnalysisStatus(enhanced.pdfAnalyzed ? "complete" : (enhanced.pdfExtractionAttempted ? "failed" : "complete"))
-        
+
         if (enhanced.verdict?.type) {
           onVerdictGenerated?.(enhanced.verdict.type)
         }
@@ -330,7 +330,7 @@ export function AISummaryPanel({
   const handleCopySummary = () => {
     if (!aiSummary) return
     const text = `*Speedy AI Summary - ${ticker || company}*\n\n*Verdict:* ${getVerdictLabel(aiSummary.verdict.type)} (${aiSummary.verdict.confidence}% Confidence)\n\n*Headline:* ${headline}\n\n*Summary:* ${aiSummary.simpleSummary.replace(/<[^>]*>?/gm, '')}\n\n*Key Insights:*\n${aiSummary.keyInsights.map((i, idx) => `${idx + 1}. ${i}`).join('\n')}\n\nAnalyzed with Speedy Finance AI`
-    
+
     navigator.clipboard.writeText(text).then(() => {
       setCopyStatus('copied')
       setTimeout(() => setCopyStatus('idle'), 2000)
@@ -400,7 +400,7 @@ export function AISummaryPanel({
               {pdfUrl ? "Fetching PDF document..." : "Reading headline..."}
             </span>
           </div>
-          
+
           {pdfUrl && (
             <div className="flex items-center gap-3 text-xs">
               <div className={`w-5 h-5 rounded-full flex items-center justify-center ${analysisStatus === "analyzing" ? "bg-purple-500/20" : "bg-zinc-700"}`}>
@@ -415,7 +415,7 @@ export function AISummaryPanel({
               </span>
             </div>
           )}
-          
+
           <div className="flex items-center gap-3 text-xs">
             <div className="w-5 h-5 rounded-full flex items-center justify-center bg-zinc-700">
               <Sparkles className="h-3 w-3 text-zinc-500" />
@@ -436,17 +436,17 @@ export function AISummaryPanel({
 
   if (!aiSummary) return null
 
-    const verdictColor = getVerdictColor(aiSummary.verdict.type, aiSummary.verdict.confidence)
-    const verdictLabel = getVerdictLabel(aiSummary.verdict.type)
-    const verdictIcon = getVerdictIcon(aiSummary.verdict.type)
-    const verdictBg = getVerdictBgColor(aiSummary.verdict.type, aiSummary.verdict.confidence)
+  const verdictColor = getVerdictColor(aiSummary.verdict.type, aiSummary.verdict.confidence)
+  const verdictLabel = getVerdictLabel(aiSummary.verdict.type)
+  const verdictIcon = getVerdictIcon(aiSummary.verdict.type)
+  const verdictBg = getVerdictBgColor(aiSummary.verdict.type, aiSummary.verdict.confidence)
 
   const generatedLabel = generatedAt
     ? generatedAt.toLocaleTimeString("en-IN", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: true,
-      })
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    })
     : null
 
   const impactMeta = impact ? IMPACT_META[impact] : null
@@ -458,14 +458,13 @@ export function AISummaryPanel({
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-zinc-500">Generated by Speedy AI</span>
           {source && (
-            <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
-              source === "openai+pdf" ? "bg-emerald-500/20 text-emerald-400" :
+            <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${source === "openai+pdf" ? "bg-emerald-500/20 text-emerald-400" :
               source === "openai" ? "bg-cyan-500/20 text-cyan-400" :
-              "bg-zinc-700 text-zinc-400"
-            }`}>
-              {source === "openai+pdf" ? "📄 PDF Analyzed" : 
-               source === "openai" ? "✨ AI Enhanced" : 
-               "📝 Basic"}
+                "bg-zinc-700 text-zinc-400"
+              }`}>
+              {source === "openai+pdf" ? "📄 PDF Analyzed" :
+                source === "openai" ? "✨ AI Enhanced" :
+                  "📝 Basic"}
             </span>
           )}
           {pdfUrl && !pdfAnalyzed && analysisStatus === "failed" && (
@@ -516,8 +515,8 @@ export function AISummaryPanel({
             onClick={handleCopySummary}
             className={clsx(
               "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all text-[10px] font-medium",
-              copyStatus === 'copied' 
-                ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400" 
+              copyStatus === 'copied'
+                ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400"
                 : "bg-white/5 hover:bg-white/10 border-white/10 text-zinc-400 hover:text-white"
             )}
             title="Copy formatted summary for WhatsApp/Notes"
@@ -537,7 +536,7 @@ export function AISummaryPanel({
           </button>
         </div>
       </div>
-      
+
       <AnimatePresence>
         {!isCollapsed && (
           <motion.div
@@ -548,250 +547,250 @@ export function AISummaryPanel({
             className="space-y-4 overflow-hidden"
           >
             {/* Verdict Badge */}
-        <div className="glass-card rounded-2xl p-5" style={{ borderColor: `${verdictColor}30` }}>
-          <div className="flex items-center gap-4">
-            <div 
-              className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
-              style={{ backgroundColor: `${verdictColor}15` }}
-            >
-              {verdictIcon}
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-sm text-zinc-400">Verdict :</span>
-                <span 
-                  className="font-bold text-lg"
-                  style={{ color: verdictColor }}
+            <div className="glass-card rounded-2xl p-5" style={{ borderColor: `${verdictColor}30` }}>
+              <div className="flex items-center gap-4">
+                <div
+                  className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
+                  style={{ backgroundColor: `${verdictColor}15` }}
                 >
-                  {verdictLabel}
-                </span>
-              </div>
-              <p className="text-sm text-zinc-400 leading-relaxed">
-                {aiSummary.verdict.reasoning}
-              </p>
-            </div>
-            <div className="text-right">
-              <div className="flex items-center justify-end gap-1 mb-0.5">
-                <span className="text-xs text-zinc-500">Confidence</span>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <HelpCircle className="h-3 w-3 text-zinc-600 hover:text-zinc-400 cursor-help" />
-                    </TooltipTrigger>
-                    <TooltipContent className="max-w-[200px] text-[10px] leading-snug">
-                      Speedy AI performs a deep analysis of the full text and PDF, whereas the sidebar uses fast keyword matching. This panel provides the most accurate institutional-grade confidence score.
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-              <div className="text-lg font-semibold" style={{ color: verdictColor }}>
-                {aiSummary.verdict.confidence}%
-              </div>
-            </div>
-          </div>
-        </div>
-
-              {isMarketOpen && (
-                <div className="glass-card rounded-2xl p-4 overflow-hidden relative isolate transition-all">
-                  <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none -z-10">
-                    <TrendingUp className="h-8 w-8 text-emerald-500" />
+                  {verdictIcon}
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm text-zinc-400">Verdict :</span>
+                    <span
+                      className="font-bold text-lg"
+                      style={{ color: verdictColor }}
+                    >
+                      {verdictLabel}
+                    </span>
                   </div>
-                  
-                  <button 
-                    onClick={() => setMarketDepthUserExpanded(!marketDepthUserExpanded)}
-                    className="w-full flex items-center justify-between text-xs font-semibold text-zinc-400 hover:text-white transition-colors"
-                  >
-                    <div className="flex items-center gap-2">
-                      <BarChart2 className="h-4 w-4 text-cyan-400" />
-                      <span>Live Market Depth</span>
-                      {!marketDepthUserExpanded && (
-                         <span className="text-[10px] font-normal text-zinc-500 bg-white/5 px-2 py-0.5 rounded ml-2">Collapsed</span>
-                      )}
-                    </div>
-                    {marketDepthUserExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                  </button>
+                  <p className="text-sm text-zinc-400 leading-relaxed">
+                    {aiSummary.verdict.reasoning}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <div className="flex items-center justify-end gap-1 mb-0.5">
+                    <span className="text-xs text-zinc-500">Confidence</span>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="h-3 w-3 text-zinc-600 hover:text-zinc-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-[200px] text-[10px] leading-snug">
+                          Speedy AI performs a deep analysis of the full text and PDF, whereas the sidebar uses fast keyword matching. This panel provides the most accurate institutional-grade confidence score.
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                  <div className="text-lg font-semibold" style={{ color: verdictColor }}>
+                    {aiSummary.verdict.confidence}%
+                  </div>
+                </div>
+              </div>
+            </div>
 
-                  <AnimatePresence>
-                    {marketDepthUserExpanded && (
-                      <motion.div 
-                        initial={{ height: 0, opacity: 0, marginTop: 0 }}
-                        animate={{ height: "auto", opacity: 1, marginTop: 16 }}
-                        exit={{ height: 0, opacity: 0, marginTop: 0 }}
-                        className="pt-4 border-t border-white/5 overflow-hidden"
-                      >
-                        <MarketDepth 
-                          scripCode={scripCode || ticker} 
-                          currentPrice={quote?.currentPrice ?? null} 
-                          realDepth={realDepth}
-                        />
-                      </motion.div>
+            {isMarketOpen && (
+              <div className="glass-card rounded-2xl p-4 overflow-hidden relative isolate transition-all">
+                <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none -z-10">
+                  <TrendingUp className="h-8 w-8 text-emerald-500" />
+                </div>
+
+                <button
+                  onClick={() => setMarketDepthUserExpanded(!marketDepthUserExpanded)}
+                  className="w-full flex items-center justify-between text-xs font-semibold text-zinc-400 hover:text-white transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <BarChart2 className="h-4 w-4 text-cyan-400" />
+                    <span>Live Market Depth</span>
+                    {!marketDepthUserExpanded && (
+                      <span className="text-[10px] font-normal text-zinc-500 bg-white/5 px-2 py-0.5 rounded ml-2">Collapsed</span>
                     )}
-                  </AnimatePresence>
-                </div>
-              )}
+                  </div>
+                  {marketDepthUserExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                </button>
 
-
-
-        {/* News Summary */}
-        <div className="glass-card rounded-2xl p-5">
-          {(ticker || company) && (
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2 min-w-0">
-                {ticker && (
-                  <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[11px] text-zinc-200">
-                    {ticker}
-                  </span>
-                )}
-                {company && (
-                  <span className="text-xs text-zinc-500 truncate max-w-[180px] md:max-w-xs">
-                    {company}
-                  </span>
-                )}
+                <AnimatePresence>
+                  {marketDepthUserExpanded && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0, marginTop: 0 }}
+                      animate={{ height: "auto", opacity: 1, marginTop: 16 }}
+                      exit={{ height: 0, opacity: 0, marginTop: 0 }}
+                      className="pt-4 border-t border-white/5 overflow-hidden"
+                    >
+                      <MarketDepth
+                        scripCode={scripCode || ticker}
+                        currentPrice={quote?.currentPrice ?? null}
+                        realDepth={realDepth}
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
+            )}
+
+
+
+            {/* News Summary */}
+            <div className="glass-card rounded-2xl p-5">
+              {(ticker || company) && (
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {ticker && (
+                      <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[11px] text-zinc-200">
+                        {ticker}
+                      </span>
+                    )}
+                    {company && (
+                      <span className="text-xs text-zinc-500 truncate max-w-[180px] md:max-w-xs">
+                        {company}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <span className="text-lg">📝</span>
+                  <span>News summary</span>
+                </h4>
+                <div className="flex items-center gap-2">
+                  {/* Gap Up Alert */}
+                  {quote?.previousClose && quote?.currentPrice && quote.currentPrice > quote.previousClose && (
+                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-medium text-emerald-400">
+                      <span>↑ Gap Up</span>
+                      <span>+{(((quote?.currentPrice ?? 0) - (quote?.previousClose ?? 0)) / (quote?.previousClose ?? 1) * 100).toFixed(1)}%</span>
+                    </div>
+                  )}
+                  {/* Price at Announcement Alpha */}
+                  {quote?.priceAtAnnouncement && quote?.alphaSinceAnnouncement != null && (
+                    <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg border text-[10px] font-medium ${quote.alphaSinceAnnouncement >= 0
+                      ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400"
+                      : "bg-rose-500/15 border-rose-500/30 text-rose-400"
+                      }`}>
+                      <span className="opacity-80">Since News:</span>
+                      <span className="font-bold">{quote.alphaSinceAnnouncement >= 0 ? '+' : ''}{quote.alphaSinceAnnouncement.toFixed(1)}%</span>
+                      <span className="opacity-60 border-l border-current pl-1.5 ml-0.5">@ ₹{quote.priceAtAnnouncement.toLocaleString('en-IN', { maximumFractionDigits: 1 })}</span>
+                    </div>
+                  )}
+                  {pdfUsed && (
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 text-[10px] font-medium">
+                      Based on PDF
+                    </span>
+                  )}
+                  <span className="text-xs text-zinc-500 hidden sm:inline">What This Means for Investors</span>
+                  {onFullScreenChat && (
+                    <button
+                      onClick={onFullScreenChat}
+                      className="inline-flex items-center justify-center p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-400 hover:text-white transition-all"
+                      title="Open Full-Screen AI Chat"
+                    >
+                      <Maximize2 className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+              {time && (
+                <p className="text-xs text-zinc-500 mb-2">
+                  {new Date(time).toLocaleDateString("en-IN", {
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric",
+                  })}
+                </p>
+              )}
+              <div
+                className="text-[15px] text-zinc-100 leading-relaxed font-medium"
+                dangerouslySetInnerHTML={{ __html: mdToHtml(aiSummary.simpleSummary) }}
+              />
+
+              {impactMeta && (
+                <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-2 text-[11px]">
+                  <div className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 border ${impactMeta.pillClass}`}>
+                    <div className="flex items-center gap-0.5">
+                      {Array.from({ length: 12 }).map((_, i) => (
+                        <span
+                          key={i}
+                          className={`h-1 w-1.5 rounded-sm ${i < impactMeta.filledBars ? impactMeta.barClass : "bg-zinc-700"}`}
+                        />
+                      ))}
+                    </div>
+                    <span>{impactMeta.label}</span>
+                  </div>
+                  <span className="text-zinc-500">
+                    {impactMeta.description}
+                  </span>
+                </div>
+              )}
             </div>
-          )}
-          
-          <div className="flex items-center justify-between mb-3">
-          <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
-            <span className="text-lg">📝</span>
-            <span>News summary</span>
-          </h4>
-          <div className="flex items-center gap-2">
-            {/* Gap Up Alert */}
-                {quote?.previousClose && quote?.currentPrice && quote.currentPrice > quote.previousClose && (
-                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-[10px] font-medium text-emerald-400">
-                  <span>↑ Gap Up</span>
-                  <span>+{(((quote?.currentPrice ?? 0) - (quote?.previousClose ?? 0)) / (quote?.previousClose ?? 1) * 100).toFixed(1)}%</span>
+
+            {/* Key Insights */}
+            {aiSummary.keyInsights.length > 0 && (
+              <div className="glass-card rounded-2xl p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
+                    <span className="text-lg">💡</span>
+                    <span>Key Insights</span>
+                  </h4>
+                  <span className="text-xs text-zinc-500">Main Takeaways at a Glance</span>
                 </div>
-              )}
-              {/* Price at Announcement Alpha */}
-              {quote?.priceAtAnnouncement && quote?.alphaSinceAnnouncement != null && (
-                <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-lg border text-[10px] font-medium ${
-                  quote.alphaSinceAnnouncement >= 0 
-                    ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400" 
-                    : "bg-rose-500/15 border-rose-500/30 text-rose-400"
-                }`}>
-                  <span>Since News:</span>
-                  <span>{quote.alphaSinceAnnouncement >= 0 ? '+' : ''}{quote.alphaSinceAnnouncement.toFixed(1)}%</span>
-                </div>
-              )}
-            {pdfUsed && (
-              <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 text-[10px] font-medium">
-                Based on PDF
+                <ul className="space-y-3">
+                  {aiSummary.keyInsights.map((insight, i) => (
+                    <li key={i} className="flex items-start gap-3 text-sm text-zinc-300">
+                      <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-400 flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
+                        {i + 1}
+                      </span>
+                      <span>{insight}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Risk Factors */}
+            {aiSummary.riskFactors && aiSummary.riskFactors.length > 0 && (
+              <div className="rounded-2xl p-5 bg-rose-500/5 border border-rose-500/20">
+                <h4 className="flex items-center gap-2 text-sm font-semibold text-rose-400 mb-3">
+                  <span className="text-lg">⚠️</span>
+                  <span>Risk Factors</span>
+                </h4>
+                <ul className="space-y-2">
+                  {aiSummary.riskFactors.map((risk, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-rose-300/80">
+                      <span className="text-rose-500 mt-0.5">•</span>
+                      <span>{risk}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Opportunities */}
+            {aiSummary.opportunities && aiSummary.opportunities.length > 0 && (
+              <div className="rounded-2xl p-5 bg-emerald-500/5 border border-emerald-500/20">
+                <h4 className="flex items-center gap-2 text-sm font-semibold text-emerald-400 mb-3">
+                  <span className="text-lg">🚀</span>
+                  <span>Opportunities</span>
+                </h4>
+                <ul className="space-y-2">
+                  {aiSummary.opportunities.map((opp, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-emerald-300/80">
+                      <span className="text-emerald-500 mt-0.5">•</span>
+                      <span>{opp}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Disclaimer */}
+            <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
+              <span className="text-amber-500 text-sm">⚠</span>
+              <span className="text-[10px] text-amber-400/80">
+                Speedy AI-generated content may contain inaccuracies. Always verify with additional sources.
               </span>
-            )}
-            <span className="text-xs text-zinc-500 hidden sm:inline">What This Means for Investors</span>
-            {onFullScreenChat && (
-              <button
-                onClick={onFullScreenChat}
-                className="inline-flex items-center justify-center p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-400 hover:text-white transition-all"
-                title="Open Full-Screen AI Chat"
-              >
-                <Maximize2 className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-        </div>
-        {time && (
-          <p className="text-xs text-zinc-500 mb-2">
-            {new Date(time).toLocaleDateString("en-IN", {
-              day: "2-digit",
-              month: "short",
-              year: "numeric",
-            })}
-          </p>
-        )}
-          <div
-            className="text-[15px] text-zinc-100 leading-relaxed font-medium"
-            dangerouslySetInnerHTML={{ __html: mdToHtml(aiSummary.simpleSummary) }}
-          />
-
-        {impactMeta && (
-          <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-2 text-[11px]">
-            <div className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 border ${impactMeta.pillClass}`}>
-              <div className="flex items-center gap-0.5">
-                {Array.from({ length: 12 }).map((_, i) => (
-                  <span
-                    key={i}
-                    className={`h-1 w-1.5 rounded-sm ${i < impactMeta.filledBars ? impactMeta.barClass : "bg-zinc-700"}`}
-                  />
-                ))}
-              </div>
-              <span>{impactMeta.label}</span>
             </div>
-            <span className="text-zinc-500">
-              {impactMeta.description}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Key Insights */}
-      {aiSummary.keyInsights.length > 0 && (
-        <div className="glass-card rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="flex items-center gap-2 text-sm font-semibold text-white">
-              <span className="text-lg">💡</span>
-              <span>Key Insights</span>
-            </h4>
-            <span className="text-xs text-zinc-500">Main Takeaways at a Glance</span>
-          </div>
-          <ul className="space-y-3">
-            {aiSummary.keyInsights.map((insight, i) => (
-              <li key={i} className="flex items-start gap-3 text-sm text-zinc-300">
-                <span className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-400 flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
-                  {i + 1}
-                </span>
-                <span>{insight}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Risk Factors */}
-      {aiSummary.riskFactors && aiSummary.riskFactors.length > 0 && (
-        <div className="rounded-2xl p-5 bg-rose-500/5 border border-rose-500/20">
-          <h4 className="flex items-center gap-2 text-sm font-semibold text-rose-400 mb-3">
-            <span className="text-lg">⚠️</span>
-            <span>Risk Factors</span>
-          </h4>
-          <ul className="space-y-2">
-            {aiSummary.riskFactors.map((risk, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-rose-300/80">
-                <span className="text-rose-500 mt-0.5">•</span>
-                <span>{risk}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Opportunities */}
-      {aiSummary.opportunities && aiSummary.opportunities.length > 0 && (
-        <div className="rounded-2xl p-5 bg-emerald-500/5 border border-emerald-500/20">
-          <h4 className="flex items-center gap-2 text-sm font-semibold text-emerald-400 mb-3">
-            <span className="text-lg">🚀</span>
-            <span>Opportunities</span>
-          </h4>
-          <ul className="space-y-2">
-            {aiSummary.opportunities.map((opp, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-emerald-300/80">
-                <span className="text-emerald-500 mt-0.5">•</span>
-                <span>{opp}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-        {/* Disclaimer */}
-        <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
-          <span className="text-amber-500 text-sm">⚠</span>
-          <span className="text-[10px] text-amber-400/80">
-            Speedy AI-generated content may contain inaccuracies. Always verify with additional sources.
-          </span>
-        </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -810,7 +809,7 @@ export function VerdictBadge({ verdict }: { verdict: VerdictType }) {
   return (
     <span
       className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium"
-      style={{ 
+      style={{
         backgroundColor: `${color}20`,
         color: color,
       }}

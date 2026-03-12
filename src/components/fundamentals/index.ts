@@ -1,5 +1,6 @@
 export { OverviewCard } from "./OverviewCard"
 export { FinancialSummaryCards } from "./FinancialSummaryCards"
+export { FinancialSummaryCardsSkeleton } from "./FinancialSummaryCardsSkeleton"
 export { QuarterlyResultsTable } from "./QuarterlyResultsTable"
 export { IncomeStatementTable } from "./IncomeStatementTable"
 export { BalanceSheetTable } from "./BalanceSheetTable"

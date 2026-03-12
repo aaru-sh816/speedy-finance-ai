@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useCallback } from "react"
 import { ProductSegmentsModal } from "./ProductSegmentsModal"
 import { PieChart } from "lucide-react"
 import { FundamentalsTable } from "./FundamentalsTable"
+import { formatCr } from "@/lib/format-numbers"
 
 interface FinancialRow {
   header?: string
@@ -16,32 +17,63 @@ interface IncomeStatementTableProps {
   dataConsolidated?: FinancialRow[] | null
   dataStandalone?: FinancialRow[] | null
   dataTtm?: FinancialRow[] | null
-  onNoteAction?: (context: { title: string; content: string; type: "note" | "ai" }) => void
 }
 
 function toLabel(key: string): string {
   const map: Record<string, string> = {
-    revenueFromOperations: "Revenue",
+    revenueFromOperations: "Sales+",
+    revenue: "Sales+",
+    sales: "Sales+",
     operatingRevenue: "Operating Revenue",
-    sales: "Sales",
     income: "Income",
-    expenses: "Expenses",
-    profitBeforeTax: "PBT",
-    profitLossForPeriod: "PAT",
-    EPS: "EPS",
-    eps: "EPS",
+    expenses: "Expenses+",
+    totalExpenses: "Expenses+",
+    operatingProfit: "Operating Profit",
+    opm: "OPM %",
+    operatingMargin: "OPM %",
+    otherIncome: "Other Income+",
+    interest: "Interest",
+    financeCosts: "Interest",
+    depreciation: "Depreciation",
+    depreciationAmortisation: "Depreciation",
+    profitBeforeTax: "Profit before tax",
+    pbt: "Profit before tax",
+    tax: "Tax %",
+    currentTax: "Tax %",
+    netProfit: "Net Profit+",
+    profitLossForPeriod: "Net Profit+",
+    pat: "Net Profit+",
+    EPS: "EPS in Rs",
+    eps: "EPS in Rs",
+    dividendPayout: "Dividend Payout %",
     EBIT: "EBIT",
     EBITDA: "EBITDA",
     grossIncome: "Gross Income",
-    operatingProfit: "Operating Profit",
-    costOfMaterialsConsumed: "Cost of Materials",
-    changesInInventories: "Changes in Inventories",
+    costOfMaterialsConsumed: "Material Cost", // Sub-item
+    changesInInventories: "Change in Inventory", // Sub-item
+    costOfGoodsSold: "Cost of Goods Sold", // Sub-item
+    employeeBenefitExpense: "Employee Cost", // Sub-item
+    otherExpenses: "Other Cost", // Sub-item
     totalIncome: "Total Income",
-    totalExpenses: "Total Expenses",
-    exceptionalItemsBeforeTax: "Exceptional Items",
-    extraordinaryItems: "Extraordinary Items",
+    exceptionalItems: "Exceptional Items", // Sub-item
+    dividendIncome: "Dividend Income", // Sub-item
+    minorityInterest: "Minority Share", // Sub-item
+    profitFromAssociates: "Profit from Associates", // Sub-item
+    exceptionalItemsBeforeTax: "Exceptional Items Before Tax", // Sub-item
+    extraordinaryItems: "Extraordinary Items", // Sub-item
   }
   return map[key] ?? key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase()).trim()
+}
+
+// Screener-style parent to children mapping
+const RAW_EXPANDABLE_STRUCTURE: Record<string, string[]> = {
+  expenses: ["costOfMaterialsConsumed", "changesInInventories", "employeeBenefitExpense", "otherExpenses", "costOfGoodsSold"],
+  totalExpenses: ["costOfMaterialsConsumed", "changesInInventories", "employeeBenefitExpense", "otherExpenses", "costOfGoodsSold"],
+  otherIncome: ["exceptionalItems", "dividendIncome"],
+  netProfit: ["profitFromAssociates", "minorityInterest"],
+  profitLossForPeriod: ["profitFromAssociates", "minorityInterest"],
+  pat: ["profitFromAssociates", "minorityInterest"],
+  profitBeforeTax: ["exceptionalItemsBeforeTax", "extraordinaryItems"]
 }
 
 export function IncomeStatementTable({
@@ -49,21 +81,39 @@ export function IncomeStatementTable({
   dataConsolidated,
   dataStandalone,
   dataTtm,
-  onNoteAction,
 }: IncomeStatementTableProps) {
-  const [view, setView] = useState<"c" | "s">("c")
+  const hasConsolidated = dataConsolidated != null && dataConsolidated.length > 0;
+  const hasStandalone = dataStandalone != null && dataStandalone.length > 0;
+  const [selectedView, setView] = useState<"c" | "s">("c")
   const [productSegmentsOpen, setProductSegmentsOpen] = useState(false)
+  const view = selectedView === "s" && !hasStandalone ? "c" : selectedView === "c" && !hasConsolidated ? "s" : selectedView
   const base = view === "c" ? (dataConsolidated ?? []) : (dataStandalone ?? [])
+  const canToggle = hasConsolidated && hasStandalone;
   const ttm = dataTtm ?? []
-  
+
   const data = useMemo(() => {
     const d = [...base]
     if (ttm.length > 0) d.push({ ...ttm[0], header: "TTM" } as FinancialRow)
     return d
   }, [base, ttm])
 
-  const { lineItemKeys } = useMemo(() => {
-    if (data.length === 0) return { lineItemKeys: [] as string[] }
+  const PL_ORDER = [
+    "revenueFromOperations", "revenue", "sales",
+    "expenses", "totalExpenses",
+    "operatingProfit",
+    "opm", "operatingMargin",
+    "otherIncome",
+    "interest", "financeCosts",
+    "depreciation", "depreciationAmortisation",
+    "profitBeforeTax", "pbt",
+    "tax", "currentTax",
+    "profitLossForPeriod", "netProfit", "pat",
+    "dividendPayout",
+    "EPS", "eps",
+  ]
+
+  const { lineItemKeys, expandableStructure } = useMemo(() => {
+    if (data.length === 0) return { lineItemKeys: [] as string[], expandableStructure: {} }
     const keySet = new Set<string>()
     data.forEach((row) => {
       Object.keys(row).forEach((k) => {
@@ -72,8 +122,71 @@ export function IncomeStatementTable({
         }
       })
     })
-    return { lineItemKeys: Array.from(keySet).slice(0, 18) }
+    const availableKeys = Array.from(keySet)
+
+    const activeExpandableStructure: Record<string, string[]> = {}
+    let allChildKeys = new Set<string>()
+
+    Object.entries(RAW_EXPANDABLE_STRUCTURE).forEach(([parent, children]) => {
+      if (availableKeys.includes(parent)) {
+        const activeChildren = children.filter(c => availableKeys.includes(c))
+        if (activeChildren.length > 0) {
+          activeExpandableStructure[parent] = activeChildren
+          activeChildren.forEach(c => allChildKeys.add(c))
+        }
+      }
+    })
+
+    const parentLevelKeys = availableKeys.filter(k => !allChildKeys.has(k))
+
+    const ordered = PL_ORDER.filter((k) => parentLevelKeys.includes(k))
+    const rest = parentLevelKeys.filter((k) => !PL_ORDER.includes(k))
+    return {
+      lineItemKeys: [...ordered, ...rest].slice(0, 18),
+      expandableStructure: activeExpandableStructure
+    }
   }, [data])
+
+  const screenerFormatCell = useCallback(
+    (v: string | number | undefined, key: string, row?: FinancialRow): string => {
+      if (v == null || v === "") return "—"
+      const n = Number(v)
+      if (!Number.isFinite(n)) return String(v)
+      const k = key.toLowerCase()
+
+      if (k === "opm" || k === "operatingmargin") {
+        if (Math.abs(n) <= 1) return `${Math.round(n * 100)}%`
+        if (Math.abs(n) <= 100) return `${Math.round(n)}%`
+        if (row) {
+          const rev = Number(row.revenueFromOperations ?? row.revenue ?? row.sales ?? 0)
+          const op = Number(row.operatingProfit ?? 0)
+          if (rev > 0 && op !== 0) return `${Math.round((op / rev) * 100)}%`
+        }
+        return `${Math.round(n)}%`
+      }
+
+      if (k === "tax" || k === "currenttax") {
+        if (Math.abs(n) <= 100) return `${Math.round(n)}%`
+        if (row) {
+          const pbt = Number(row.profitBeforeTax ?? row.pbt ?? 0)
+          if (pbt !== 0) return `${Math.round((n / pbt) * 100)}%`
+        }
+        return "—"
+      }
+
+      if (k === "eps") {
+        return n.toFixed(2)
+      }
+
+      if (k === "dividendpayout") {
+        if (Math.abs(n) <= 1) return `${Math.round(n * 100)}%`
+        return `${Math.round(n)}%`
+      }
+
+      return formatCr(n)
+    },
+    []
+  )
 
   if (data.length === 0) return null
 
@@ -83,13 +196,24 @@ export function IncomeStatementTable({
         title="Profit & Loss"
         data={data}
         lineItemKeys={lineItemKeys}
+        expandableStructure={expandableStructure}
         toLabel={toLabel}
         view={view}
-        onViewChange={setView}
+        onViewChange={canToggle ? (v) => setView(v) : undefined}
         onActionClick={() => setProductSegmentsOpen(true)}
         actionLabel="Product Segments"
         actionIcon={<PieChart className="h-3 w-3" />}
-        onNoteAction={onNoteAction}
+        highlightKeys={[
+          "revenueFromOperations", "revenue", "sales",
+          "expenses", "totalExpenses",
+          "operatingProfit",
+          "otherIncome",
+          "profitBeforeTax", "pbt",
+          "profitLossForPeriod", "netProfit", "pat",
+        ]}
+        subtitle={view === "c" ? "Consolidated Figures in Rs. Crores / View Standalone" : "Standalone Figures in Rs. Crores / View Consolidated"}
+        periodOrder="asc"
+        formatCell={screenerFormatCell}
       />
 
       <ProductSegmentsModal

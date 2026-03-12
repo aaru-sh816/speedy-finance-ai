@@ -150,7 +150,7 @@ export async function getQuote(
 export async function getDailyQuotes(
   symbol: string,
   opts?: { from?: number; to?: number }
-): Promise<{ price: Array<{ close_price: number; quote_date: string; [k: string]: unknown }>; symbol: string }> {
+): Promise<{ price: Array<{ close_price: number; quote_date: string;[k: string]: unknown }>; symbol: string }> {
   return finedgeFetch(`/daily-quotes/${encodeURIComponent(symbol)}`, opts ?? {})
 }
 
@@ -176,7 +176,7 @@ export async function getAnnualPriceRatios(
   symbol: string,
   opts?: { statement_type: StatementType }
 ): Promise<{
-  price_ratios: Array<{ pe?: number; pb?: number; header?: string; year?: number; [k: string]: unknown }>
+  price_ratios: Array<{ pe?: number; pb?: number; header?: string; year?: number;[k: string]: unknown }>
   symbol: string
 }> {
   return finedgeFetch(
@@ -306,7 +306,7 @@ export async function getHolidaysCalendar(opts?: Record<string, string>): Promis
 // ---------- Segment revenue ----------
 export async function getSegmentRevenue(
   symbol: string,
-  opts?: { period?: string }
+  opts?: { period?: string; statement_type?: string; statement_code?: string }
 ): Promise<unknown> {
   return finedgeFetch(`/segment-revenue/${encodeURIComponent(symbol)}`, opts ?? {})
 }

@@ -9,6 +9,7 @@ import {
   isInWatchlist,
   reorderWatchlist,
   checkPriceAlerts,
+  saveWatchlist,
 } from '@/lib/storage'
 
 export interface WatchlistQuote {
@@ -21,6 +22,7 @@ export interface WatchlistQuote {
   high: number
   low: number
   volume: number
+  marketCap: number
   lastUpdated: string
   isLoading: boolean
   error?: string
@@ -56,7 +58,7 @@ export function useWatchlist(autoRefreshInterval = 30000): UseWatchlistReturn {
     }
 
     const scripCodes = watchlistItems.map(i => i.scripCode)
-    
+
     setQuotes(prev => {
       const updated = { ...prev }
       scripCodes.forEach(code => {
@@ -72,6 +74,7 @@ export function useWatchlist(autoRefreshInterval = 30000): UseWatchlistReturn {
             high: 0,
             low: 0,
             volume: 0,
+            marketCap: 0,
             lastUpdated: '',
             isLoading: true,
           }
@@ -83,82 +86,108 @@ export function useWatchlist(autoRefreshInterval = 30000): UseWatchlistReturn {
     })
 
     try {
-        const response = await fetch('/api/bse/quotes/bulk', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ symbols: scripCodes }),
-        })
+      const response = await fetch('/api/bse/quotes/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbols: scripCodes }),
+      })
 
-        if (!response.ok) throw new Error('Failed to fetch quotes')
+      if (!response.ok) throw new Error('Failed to fetch quotes')
 
-        const data = await response.json()
-        const quotesArray = data.quotes || []
-        
-        setQuotes(prev => {
-          const updated = { ...prev }
-          
-          for (const quote of quotesArray) {
-            const q = quote as {
-              symbol?: string
-              price?: number | null
-              change?: number | null
-              changePercent?: number | null
-              dayHigh?: number | null
-              dayLow?: number | null
-              volume?: number | null
-              error?: string
-            }
-            const scripCode = q.symbol || ''
-            const item = watchlistItems.find(i => i.scripCode === scripCode)
-            
-            if (q.error) {
-              updated[scripCode] = {
-                ...updated[scripCode],
-                scripCode,
-                symbol: item?.symbol || '',
-                name: item?.name || '',
-                isLoading: false,
-                error: q.error,
-              }
-            } else {
-              updated[scripCode] = {
-                scripCode,
-                symbol: item?.symbol || '',
-                name: item?.name || '',
-                price: q.price || 0,
-                change: q.change || 0,
-                changePercent: q.changePercent || 0,
-                high: q.dayHigh || 0,
-                low: q.dayLow || 0,
-                volume: q.volume || 0,
-                lastUpdated: new Date().toISOString(),
-                isLoading: false,
-              }
-            }
+      const data = await response.json()
+      const quotesArray = data.quotes || []
+
+      // 1. Process side-effects outside of state updates (Fix React Warning)
+      let needsSave = false
+      const persistedItems = [...watchlistItems]
+
+      for (const quote of quotesArray) {
+        const q = quote as { symbol?: string; price?: number | null }
+        const scripCode = q.symbol || ''
+        const item = watchlistItems.find(i => i.scripCode === scripCode)
+
+        // Seed `addedPrice` lazily if missing
+        if (item && !item.addedPrice && q.price) {
+          const idx = persistedItems.findIndex(i => i.scripCode === scripCode)
+          if (idx !== -1) {
+            persistedItems[idx] = { ...persistedItems[idx], addedPrice: q.price }
+            needsSave = true
           }
-
-          for (const code of scripCodes) {
-            if (!updated[code] || updated[code].isLoading) {
-              updated[code] = {
-                ...updated[code],
-                scripCode: code,
-                symbol: watchlistItems.find(i => i.scripCode === code)?.symbol || '',
-                name: watchlistItems.find(i => i.scripCode === code)?.name || '',
-                isLoading: false,
-                error: 'Quote not available',
-              }
-            }
-          }
-
-          return updated
-        })
-
-        const priceMap: Record<string, { price: number }> = {}
-        for (const quote of quotesArray) {
-          const q = quote as { symbol?: string; price?: number | null }
-          if (q.symbol && q.price) priceMap[q.symbol] = { price: q.price }
         }
-        checkPriceAlerts(priceMap)
+      }
+
+      if (needsSave) {
+        saveWatchlist(persistedItems)
+      }
+
+      // 2. Pure functional state update
+      setQuotes(prev => {
+        const updated = { ...prev }
+
+        for (const quote of quotesArray) {
+          const q = quote as {
+            symbol?: string
+            price?: number | null
+            change?: number | null
+            changePercent?: number | null
+            dayHigh?: number | null
+            dayLow?: number | null
+            volume?: number | null
+            marketCap?: number | null
+            error?: string
+          }
+          const scripCode = q.symbol || ''
+          const item = watchlistItems.find(i => i.scripCode === scripCode)
+
+          if (q.error) {
+            updated[scripCode] = {
+              ...updated[scripCode],
+              scripCode,
+              symbol: item?.symbol || '',
+              name: item?.name || '',
+              isLoading: false,
+              error: q.error,
+            }
+          } else {
+            updated[scripCode] = {
+              scripCode,
+              symbol: item?.symbol || '',
+              name: item?.name || '',
+              price: q.price || 0,
+              change: q.change || 0,
+              changePercent: q.changePercent || 0,
+              high: q.dayHigh || 0,
+              low: q.dayLow || 0,
+              volume: q.volume || 0,
+              marketCap: q.marketCap || 0,
+              lastUpdated: new Date().toISOString(),
+              isLoading: false,
+            }
+          }
+        }
+
+        for (const code of scripCodes) {
+          if (!updated[code] || updated[code].isLoading) {
+            updated[code] = {
+              ...updated[code],
+              scripCode: code,
+              symbol: watchlistItems.find(i => i.scripCode === code)?.symbol || '',
+              name: watchlistItems.find(i => i.scripCode === code)?.name || '',
+              isLoading: false,
+              error: 'Quote not available',
+            }
+          }
+        }
+
+        return updated
+      })
+
+      const priceMap: Record<string, { price: number }> = {}
+      for (const quote of quotesArray) {
+        const q = quote as { symbol?: string; price?: number | null }
+        if (q.symbol && q.price) priceMap[q.symbol] = { price: q.price }
+      }
+      checkPriceAlerts(priceMap)
 
     } catch (error) {
       setQuotes(prev => {

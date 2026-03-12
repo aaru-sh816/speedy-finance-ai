@@ -370,6 +370,22 @@ details[open] > summary {
   animation: fade-in-up 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Expand Row Animation - Financial Table Sub-items */
+@keyframes expandRow {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-expand-row {
+  animation: expandRow 0.25s ease-out both;
+}
+
 /* Subtle Border Glow on Hover */
 .hover-glow {
   transition: all 0.2s ease;

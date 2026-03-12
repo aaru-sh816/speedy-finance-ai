@@ -1,12 +1,12 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
-import { 
-  Search, 
-  Command, 
-  ArrowRight, 
-  TrendingUp, 
+import { useRouter, usePathname } from 'next/navigation'
+import {
+  Search,
+  Command,
+  ArrowRight,
+  TrendingUp,
   TrendingDown,
   Star,
   FileText,
@@ -23,9 +23,11 @@ import {
   Calendar,
   Activity,
   PieChart,
-  ChevronRight
+  ChevronRight,
+  PenLine
 } from 'lucide-react'
 import { getWatchlist, addToWatchlist } from '@/lib/storage'
+import { useNotes } from '@/hooks/useNotes'
 
 interface SearchResult {
   scripCode: string
@@ -42,6 +44,8 @@ interface CommandPaletteProps {
 
 export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   const router = useRouter()
+  const pathname = usePathname()
+  const { createNote, updateNote } = useNotes()
   const inputRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
@@ -54,7 +58,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   const quickActions = [
     { id: 'portfolio', label: 'Go to Portfolio', icon: PieChart, shortcut: 'P', action: () => { router.push('/portfolio'); onClose() } },
     { id: 'watchlist', label: 'Go to Watchlist', icon: Star, shortcut: 'W', action: () => { router.push('/watchlist'); onClose() } },
-    { id: 'notes', label: 'Go to Notes', icon: FileText, shortcut: 'N', action: () => { router.push('/notes'); onClose() } },
+    { id: 'notes', label: 'Go to Research Hub', icon: FileText, shortcut: 'N', action: () => { router.push('/apple-notes'); onClose() } },
     { id: 'bulk-deals', label: 'Bulk Deals', icon: BarChart3, shortcut: 'B', action: () => { router.push('/bulk-deals'); onClose() } },
     { id: 'market', label: 'Market Overview', icon: Activity, shortcut: 'M', action: () => { router.push('/market'); onClose() } },
     { id: 'screener', label: 'Stock Screener', icon: Search, shortcut: 'S', action: () => { router.push('/screener'); onClose() } },
@@ -66,15 +70,15 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
       setQuery('')
       setResults([])
       setSelectedIndex(0)
-      
+
       // Load recent searches
       const saved = localStorage.getItem('speedy-recent-searches')
       if (saved) {
         try {
           setRecentSearches(JSON.parse(saved).slice(0, 5))
-        } catch {}
+        } catch { }
       }
-      
+
       // Load watchlist items
       setWatchlistItems(getWatchlist().map(i => i.scripCode))
     }
@@ -111,8 +115,9 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen) return
 
-      const totalItems = query.trim() 
-        ? results.length 
+      // If query is present, the first item is "Create Note", so totalItems is results.length + 1
+      const totalItems = query.trim()
+        ? results.length + 1
         : quickActions.length + recentSearches.length
 
       switch (e.key) {
@@ -141,8 +146,24 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
 
   const handleSelect = (index: number) => {
     if (query.trim()) {
-      // Stock results
-      const stock = results[index]
+      if (index === 0) {
+        // Create Note Action
+        const note = createNote(undefined, query.trim(), '')
+
+        // Auto-tag if on a company page
+        const match = pathname.match(/\/company\/(\d+)/)
+        if (match) {
+          const scripCode = match[1]
+          updateNote(note.id, { scripCode })
+        }
+
+        router.push(`/apple-notes?noteId=${note.id}`)
+        onClose()
+        return
+      }
+
+      // Stock results (offset by 1 due to Create Note action)
+      const stock = results[index - 1]
       if (stock) {
         saveToRecent(stock)
         router.push(`/company/${stock.scripCode}`)
@@ -167,7 +188,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
     const saved = localStorage.getItem('speedy-recent-searches')
     let recent: SearchResult[] = []
     if (saved) {
-      try { recent = JSON.parse(saved) } catch {}
+      try { recent = JSON.parse(saved) } catch { }
     }
     recent = [stock, ...recent.filter(r => r.scripCode !== stock.scripCode)].slice(0, 5)
     localStorage.setItem('speedy-recent-searches', JSON.stringify(recent))
@@ -188,7 +209,7 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
   return (
     <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh]">
       {/* Backdrop */}
-      <div 
+      <div
         className="absolute inset-0 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
         onClick={onClose}
       />
@@ -223,30 +244,65 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
           <div className="max-h-[60vh] overflow-y-auto">
             {query.trim() ? (
               // Search Results
-              <div className="p-2">
+              <div className="p-2 space-y-1">
+                {/* Always show Create Note when typing */}
+                <button
+                  onClick={() => handleSelect(0)}
+                  className={`w-full flex items-center gap-4 p-4 rounded-xl text-left transition-all group ${selectedIndex === 0
+                      ? 'bg-cyan-500/10 border border-cyan-500/30'
+                      : 'hover:bg-zinc-800/50 border border-transparent'
+                    }`}
+                >
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 transition-colors ${selectedIndex === 0 ? 'bg-cyan-500/20' : 'bg-zinc-800 group-hover:bg-cyan-500/20'
+                    }`}>
+                    <PenLine className={`h-6 w-6 transition-colors ${selectedIndex === 0 ? 'text-cyan-400' : 'text-zinc-500 group-hover:text-cyan-400'
+                      }`} />
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-white text-lg">Save to Research</span>
+                      {pathname.includes('/company/') && (
+                        <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-400 text-xs border border-cyan-500/20">
+                          Auto-tagged Context
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-zinc-400 truncate font-mono">"{query}"</p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <kbd className="px-2 py-1 rounded-lg bg-black/50 border border-zinc-800 text-xs text-zinc-500 font-mono">
+                      ↵
+                    </kbd>
+                  </div>
+                </button>
+
+                {results.length > 0 && <div className="h-px bg-zinc-800/50 my-2 mx-2" />}
+
                 {results.length === 0 && !isLoading && (
-                  <div className="py-12 text-center text-zinc-500">
-                    <Search className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                  <div className="py-8 text-center text-zinc-600">
+                    <Search className="h-8 w-8 mx-auto mb-3 opacity-20" />
                     <p className="text-sm">No stocks found for "{query}"</p>
                   </div>
                 )}
 
-                {results.map((stock, index) => {
+                {results.map((stock, i) => {
                   const isInWatchlist = watchlistItems.includes(stock.scripCode)
+                  const index = i + 1 // Offset for Create Note
                   return (
                     <button
                       key={stock.scripCode}
                       onClick={() => handleSelect(index)}
-                      className={`w-full flex items-center gap-4 p-4 rounded-xl text-left transition-all group ${
-                        selectedIndex === index 
-                          ? 'bg-amber-500/10 border border-amber-500/30' 
+                      className={`w-full flex items-center gap-4 p-4 rounded-xl text-left transition-all group ${selectedIndex === index
+                          ? 'bg-amber-500/10 border border-amber-500/30'
                           : 'hover:bg-zinc-800/50 border border-transparent'
-                      }`}
+                        }`}
                     >
                       <div className="w-12 h-12 rounded-xl bg-zinc-800 flex items-center justify-center flex-shrink-0 group-hover:bg-amber-500/20 transition-colors">
                         <Building2 className="h-6 w-6 text-zinc-500 group-hover:text-amber-400 transition-colors" />
                       </div>
-                      
+
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-white text-lg">{stock.symbol}</span>
@@ -272,9 +328,8 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                         {isInWatchlist && (
                           <Star className="h-4 w-4 text-amber-400 fill-amber-400" />
                         )}
-                        <ChevronRight className={`h-5 w-5 transition-colors ${
-                          selectedIndex === index ? 'text-amber-400' : 'text-zinc-600'
-                        }`} />
+                        <ChevronRight className={`h-5 w-5 transition-colors ${selectedIndex === index ? 'text-amber-400' : 'text-zinc-600'
+                          }`} />
                       </div>
                     </button>
                   )
@@ -292,15 +347,13 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                       <button
                         key={action.id}
                         onClick={action.action}
-                        className={`w-full flex items-center gap-4 p-4 rounded-xl text-left transition-all ${
-                          selectedIndex === index 
-                            ? 'bg-amber-500/10 border border-amber-500/30' 
+                        className={`w-full flex items-center gap-4 p-4 rounded-xl text-left transition-all ${selectedIndex === index
+                            ? 'bg-amber-500/10 border border-amber-500/30'
                             : 'hover:bg-zinc-800/50 border border-transparent'
-                        }`}
+                          }`}
                       >
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
-                          selectedIndex === index ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-800 text-zinc-500'
-                        }`}>
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${selectedIndex === index ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-800 text-zinc-500'
+                          }`}>
                           <Icon className="h-5 w-5" />
                         </div>
                         <span className="flex-1 text-white font-medium">{action.label}</span>
@@ -325,24 +378,21 @@ export function CommandPalette({ isOpen, onClose }: CommandPaletteProps) {
                         <button
                           key={stock.scripCode}
                           onClick={() => handleSelect(index)}
-                          className={`w-full flex items-center gap-4 p-4 rounded-xl text-left transition-all ${
-                            selectedIndex === index 
-                              ? 'bg-amber-500/10 border border-amber-500/30' 
+                          className={`w-full flex items-center gap-4 p-4 rounded-xl text-left transition-all ${selectedIndex === index
+                              ? 'bg-amber-500/10 border border-amber-500/30'
                               : 'hover:bg-zinc-800/50 border border-transparent'
-                          }`}
+                            }`}
                         >
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${
-                            selectedIndex === index ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-800 text-zinc-500'
-                          }`}>
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${selectedIndex === index ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-800 text-zinc-500'
+                            }`}>
                             <Building2 className="h-5 w-5" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <span className="font-semibold text-white">{stock.symbol}</span>
                             <p className="text-sm text-zinc-500 truncate">{stock.name}</p>
                           </div>
-                          <ChevronRight className={`h-5 w-5 ${
-                            selectedIndex === index ? 'text-amber-400' : 'text-zinc-600'
-                          }`} />
+                          <ChevronRight className={`h-5 w-5 ${selectedIndex === index ? 'text-amber-400' : 'text-zinc-600'
+                            }`} />
                         </button>
                       )
                     })}

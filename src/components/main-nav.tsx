@@ -8,10 +8,10 @@ export function MainNav() {
   const pathname = usePathname()
 
   const items = [
+    { href: "/watchlist", label: "Watchlist" },
     { href: "/announcements", label: "Announcements" },
     { href: "/screener", label: "Screener" },
     { href: "/bulk-deals", label: "Bulk Deals" },
-    { href: "/corporate-actions", label: "Corporate Actions" },
     { href: "/apple-notes", label: "Notes" },
   ]
 

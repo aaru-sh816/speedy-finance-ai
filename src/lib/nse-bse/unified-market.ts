@@ -57,12 +57,13 @@ export async function getBseQuoteFromApi(scripCode: string): Promise<UnifiedQuot
     const bse = getBSE();
     const q = await bse.quote(scripCode);
     if (q && typeof (q as { LTP?: number }).LTP === "number") {
-      const h = q as { LTP: number; PrevClose: number; Open: number; High: number; Low: number; volume?: number };
+      const h = q as { LTP: number; PrevClose: number; Open: number; High: number; Low: number; volume?: number; TotalTradedQty?: number; Qty?: number };
       const prev = h.PrevClose ?? 0;
       const ltp = h.LTP ?? 0;
       const change = prev ? ltp - prev : 0;
       const changePercent = prev ? (change / prev) * 100 : 0;
-      const vol = h.volume != null && Number.isFinite(h.volume) ? h.volume : null;
+      const rawVol = h.volume ?? h.TotalTradedQty ?? h.Qty;
+      const vol = rawVol != null && Number.isFinite(rawVol) ? Number(rawVol) : null;
       return {
         symbol: scripCode,
         price: ltp,
@@ -123,13 +124,16 @@ export async function getNseQuoteFromApi(symbol: string): Promise<UnifiedQuote |
     const nse = getNSE();
     const q = await nse.equityQuote(symbol);
     const pi = (q as { priceInfo?: { lastPrice?: number; change?: number; pChange?: number; previousClose?: number; intraDayHighLow?: { max?: number; min?: number } } })?.priceInfo;
+    const volumeInfo = (q as { azure?: { volume?: number; totalTradedVolume?: number }; volume?: { totQty?: number } })
+    const rawVol = volumeInfo?.azure?.volume ?? volumeInfo?.azure?.totalTradedVolume ?? volumeInfo?.volume?.totQty;
+
     if (pi?.lastPrice != null) {
       return {
         symbol: symbol.toUpperCase(),
         price: Number(pi.lastPrice),
         change: Number(pi.change ?? 0) || null,
         changePercent: Number(pi.pChange ?? 0) || null,
-        volume: null,
+        volume: rawVol != null ? Number(rawVol) : null,
         dayHigh: pi.intraDayHighLow?.max != null ? Number(pi.intraDayHighLow.max) : null,
         dayLow: pi.intraDayHighLow?.min != null ? Number(pi.intraDayHighLow.min) : null,
         previousClose: pi.previousClose != null ? Number(pi.previousClose) : null,

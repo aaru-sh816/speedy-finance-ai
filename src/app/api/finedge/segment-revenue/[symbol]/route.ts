@@ -25,7 +25,9 @@ export async function GET(
     }
     const { searchParams } = new URL(request.url)
     const period = (searchParams.get("period") || "annual") as "quarterly" | "annual" | "ttm"
-    const data = await getSegmentRevenue(nseSymbol, { period })
+    const statement_type = searchParams.get("statement_type") || "c"
+    const statement_code = searchParams.get("statement_code") || "pl"
+    const data = await getSegmentRevenue(nseSymbol, { period, statement_type, statement_code })
     return NextResponse.json(data, {
       headers: { "Cache-Control": "public, s-maxage=3600" },
     })

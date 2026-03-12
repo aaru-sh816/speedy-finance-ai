@@ -99,7 +99,8 @@ async function fetchBSEScripList(): Promise<ParsedStock[]> {
   }
 
   try {
-    const rows = await getBseListSecuritiesFromApi({ segment: "Equity", status: "Active" })
+    // Explicitly pass group: "" to fetch ALL active equity symbols (not just Group A)
+    const rows = await getBseListSecuritiesFromApi({ segment: "Equity", status: "Active", group: "" })
     const stocks: ParsedStock[] = rows
       .map((row) => ({
         symbol: row.symbol || row.scripcode || "",
@@ -135,29 +136,29 @@ function searchBSEScrips(query: string, scrips: ParsedStock[]): ParsedStock[] {
   for (const s of scrips) {
     if (s.symbol.toUpperCase().startsWith(q)) {
       results.push(s)
-      if (results.length >= 30) break
+      if (results.length >= 100) break
     }
   }
   
   // If not enough, also match by name prefix
-  if (results.length < 30) {
+  if (results.length < 100) {
     for (const s of scrips) {
       if (!results.find(r => r.scripCode === s.scripCode)) {
         if (s.name.toUpperCase().startsWith(q)) {
           results.push(s)
-          if (results.length >= 30) break
+          if (results.length >= 100) break
         }
       }
     }
   }
   
   // If still not enough, match anywhere in name
-  if (results.length < 30) {
+  if (results.length < 100) {
     for (const s of scrips) {
       if (!results.find(r => r.scripCode === s.scripCode)) {
         if (s.name.toUpperCase().includes(q) || s.symbol.toUpperCase().includes(q)) {
           results.push(s)
-          if (results.length >= 30) break
+          if (results.length >= 100) break
         }
       }
     }

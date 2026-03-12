@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
-import { 
-  Search, Filter, Download, Volume2, VolumeX, RefreshCw, TrendingUp, TrendingDown, 
+import {
+  Search, Filter, Download, Volume2, VolumeX, RefreshCw, TrendingUp, TrendingDown,
   FileText, Sparkles, X, ExternalLink, ChevronRight, Globe, AlertTriangle, Zap, ZapOff,
   Calendar, BarChart2, Share2, Bookmark, ChevronDown, MessageSquare, Clock, ArrowLeft, ChevronLeft,
   EyeOff, Eye, Building2
@@ -66,7 +66,7 @@ function HighlightText({ text, query, className = "text-cyan-400" }: { text: str
     const parts = text.split(new RegExp(`(${escapedQuery})`, 'gi'))
     return (
       <>
-        {parts.map((part, i) => 
+        {parts.map((part, i) =>
           part.toLowerCase() === query.toLowerCase() ? (
             <span key={i} className={clsx(className, "font-bold")}>{part}</span>
           ) : (
@@ -159,6 +159,8 @@ export default function CompanyPage() {
   const [mobileView, setMobileView] = useState<'list' | 'detail'>('list')
   const [viewMode, setViewMode] = useState<'all' | 'bookmarks' | 'history'>('all')
   const [activeTab, setActiveTab] = useState<'announcements' | 'corporate-actions' | 'fundamentals'>('announcements')
+  const [selectedCategory, setSelectedCategory] = useState<string>('All Announcements')
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false)
 
   const [quote, setQuote] = useState<Quote | null>(null)
   const [quoteLoading, setQuoteLoading] = useState(false)
@@ -180,21 +182,21 @@ export default function CompanyPage() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [companyLogoSrc, setCompanyLogoSrc] = useState<string | null>(null)
 
-    const researchContext: ResearchNoteContext | undefined = company ? {
-      scripCode,
-      symbol: company.symbol,
-      companyName: company.companyName,
-      currentPrice: quote?.price ?? undefined,
-      changePercent: quote?.changePercent ?? undefined,
-    } : undefined
+  const researchContext: ResearchNoteContext | undefined = company ? {
+    scripCode,
+    symbol: company.symbol,
+    companyName: company.companyName,
+    currentPrice: quote?.price ?? undefined,
+    changePercent: quote?.changePercent ?? undefined,
+  } : undefined
 
-    const [overlayOpen, setOverlayOpen] = useState(false)
-    const [overlayContext, setOverlayContext] = useState<{ title?: string; content?: string; type?: "note" | "ai" }>({})
+  const [overlayOpen, setOverlayOpen] = useState(false)
+  const [overlayContext, setOverlayContext] = useState<{ title?: string; content?: string; type?: "note" | "ai" }>({})
 
-    const openOverlay = useCallback((ctx: { title?: string; content?: string; type?: "note" | "ai" }) => {
-      setOverlayContext(ctx)
-      setOverlayOpen(true)
-    }, [])
+  const openOverlay = useCallback((ctx: { title?: string; content?: string; type?: "note" | "ai" }) => {
+    setOverlayContext(ctx)
+    setOverlayOpen(true)
+  }, [])
 
 
   useEffect(() => {
@@ -221,7 +223,7 @@ export default function CompanyPage() {
         const parsed = JSON.parse(p)
         Object.entries(parsed).forEach(([id, price]) => announcementPricesRef.current.set(id, price as number))
       }
-    } catch (e) {}
+    } catch (e) { }
   }, [])
 
   useEffect(() => {
@@ -362,7 +364,7 @@ export default function CompanyPage() {
         const now = new Date()
         const diffMins = Math.floor((now.getTime() - annDate.getTime()) / 60000)
         const status = getMarketStatus()
-        
+
         if (diffMins < 5 && status.isOpen && d.price) {
           setPriceAtAnnouncement(d.price)
           announcementPricesRef.current.set(annId, d.price)
@@ -371,8 +373,49 @@ export default function CompanyPage() {
           localStorage.setItem('speedy_announcement_prices', JSON.stringify(stored))
         } else {
           const isSameDay = annDate.toDateString() === now.toDateString()
-          if (isSameDay && d.previousClose) setPriceAtAnnouncement(d.previousClose)
-          else setPriceAtAnnouncement(d.price)
+          if (isSameDay && d.previousClose) {
+            setPriceAtAnnouncement(d.previousClose)
+          } else {
+            // Fetch historical price from history API
+            try {
+              const fetchStart = new Date(annDate)
+              fetchStart.setDate(fetchStart.getDate() - 5) // Look back up to 5 days
+              const fetchEnd = new Date(annDate)
+              fetchEnd.setDate(fetchEnd.getDate() + 3) // Look forward up to 3 days
+
+              const hRes = await fetch(`/api/bse/history?symbol=${encodeURIComponent(symbol)}&scripCode=${scripCode}&fromDate=${fetchStart.toISOString().split('T')[0]}&toDate=${fetchEnd.toISOString().split('T')[0]}`)
+              if (hRes.ok) {
+                const hData = await hRes.json()
+                if (hData.data && hData.data.length > 0) {
+                  const targetTime = annDate.getTime()
+                  let closest = hData.data[0]
+                  let minDiff = Math.abs(new Date(closest.date).getTime() - targetTime)
+                  for (const pt of hData.data) {
+                    const idxTime = new Date(pt.date).getTime()
+                    // prefer price ON or BEFORE the announcement to be safe, but closest absolute is fine
+                    const diff = Math.abs(idxTime - targetTime)
+                    if (diff < minDiff) {
+                      minDiff = diff
+                      closest = pt
+                    }
+                  }
+
+                  if (closest && closest.close) {
+                    setPriceAtAnnouncement(closest.close)
+                    announcementPricesRef.current.set(annId, closest.close)
+                    const stored = JSON.parse(localStorage.getItem('speedy_announcement_prices') || '{}')
+                    stored[annId] = closest.close
+                    localStorage.setItem('speedy_announcement_prices', JSON.stringify(stored))
+                    return // SUCCESS
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn("Failed to fetch historical price, falling back to live price", e)
+            }
+
+            setPriceAtAnnouncement(d.price)
+          }
         }
       }
     } catch (e) {
@@ -405,11 +448,20 @@ export default function CompanyPage() {
     })
   }, [announcements, viewMode, bookmarks, history, excludeNoise, query])
 
+  const uniqueCategories = useMemo(() => {
+    const cats = new Set(announcements.map(a => a.category))
+    return ['All Announcements', ...Array.from(cats)].sort()
+  }, [announcements])
+
   const filteredSidebar = useMemo(() => {
-    if (!localSearchQuery) return announcements
+    let list = announcements
+    if (selectedCategory !== 'All Announcements') {
+      list = list.filter(a => a.category === selectedCategory)
+    }
+    if (!localSearchQuery) return list
     const q = localSearchQuery.toLowerCase()
-    return announcements.filter(a => a.headline.toLowerCase().includes(q) || a.category.toLowerCase().includes(q))
-  }, [announcements, localSearchQuery])
+    return list.filter(a => a.headline.toLowerCase().includes(q) || a.category.toLowerCase().includes(q))
+  }, [announcements, localSearchQuery, selectedCategory])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -511,58 +563,58 @@ export default function CompanyPage() {
             <DigitalClock />
           </div>
 
-            <div className="flex items-center justify-end gap-2 flex-1">
-              <span className="text-xs text-zinc-500">{filtered.length} results</span>
-              {quoteLoading && (
-                <span className="text-[10px] text-amber-400 flex items-center gap-1">
-                  <RefreshCw className="h-2.5 w-2.5 animate-spin" />
-                  Loading quotes...
-                </span>
-              )}
-              
-              <button 
-                onClick={() => setShowSearchModal(true)}
-                className="w-10 h-10 rounded-full flex items-center justify-center pointer-events-auto bg-[linear-gradient(180deg,rgba(20,20,22,0.85)_0%,rgba(10,10,12,0.85)_100%)] backdrop-blur-[21px] shadow-[inset_1px_1px_1px_rgba(255,255,255,0.06),0_10px_30px_rgba(0,0,0,0.6)] border border-white/5 hover:scale-110 active:scale-95 transition-all duration-300 group"
-                title="Search (Ctrl+K)"
-              >
-                <Search className="w-4 h-4 text-zinc-500 group-hover:text-white transition-colors" strokeWidth={1.5} />
-              </button>
+          <div className="flex items-center justify-end gap-2 flex-1">
+            <span className="text-xs text-zinc-500">{filtered.length} results</span>
+            {quoteLoading && (
+              <span className="text-[10px] text-amber-400 flex items-center gap-1">
+                <RefreshCw className="h-2.5 w-2.5 animate-spin" />
+                Loading quotes...
+              </span>
+            )}
 
-              <button onClick={() => setShowFilterModal(true)} className="p-2 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all"><Filter className="h-4 w-4" /></button>
-              <button onClick={() => fetchCompanyData()} className="p-2 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all"><RefreshCw className={clsx("h-4 w-4", loading && "animate-spin")} /></button>
-              
-              <button onClick={() => setEnableTTS(!enableTTS)} className={clsx("p-2 rounded-lg border transition-all", enableTTS ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400" : "bg-zinc-900/70 border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800")}>
-                {enableTTS ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-              </button>
-              
-              <button
-                onClick={() => setAutoRefresh(!autoRefresh)}
-                className={clsx(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-[10px] font-bold relative group overflow-hidden",
-                  autoRefresh 
-                    ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_15px_rgba(52,211,153,0.1)]" 
-                    : "bg-zinc-900/70 border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800"
-                )}
-                title={autoRefresh ? "Live updates every 30s" : "Auto-refresh paused"}
-              >
-                {autoRefresh ? (
-                  <>
-                    <div className="absolute inset-0 bg-emerald-400/5 animate-pulse pointer-events-none" />
-                    <Zap className="h-3.5 w-3.5 relative z-10" />
-                    <span className="hidden sm:inline relative z-10">LIVE</span>
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400"></span>
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <ZapOff className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">PAUSED</span>
-                  </>
-                )}
-              </button>
-            </div>
+            <button
+              onClick={() => setShowSearchModal(true)}
+              className="w-10 h-10 rounded-full flex items-center justify-center pointer-events-auto bg-[linear-gradient(180deg,rgba(20,20,22,0.85)_0%,rgba(10,10,12,0.85)_100%)] backdrop-blur-[21px] shadow-[inset_1px_1px_1px_rgba(255,255,255,0.06),0_10px_30px_rgba(0,0,0,0.6)] border border-white/5 hover:scale-110 active:scale-95 transition-all duration-300 group"
+              title="Search (Ctrl+K)"
+            >
+              <Search className="w-4 h-4 text-zinc-500 group-hover:text-white transition-colors" strokeWidth={1.5} />
+            </button>
+
+            <button onClick={() => setShowFilterModal(true)} className="p-2 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all"><Filter className="h-4 w-4" /></button>
+            <button onClick={() => fetchCompanyData()} className="p-2 rounded-lg bg-zinc-900/70 border border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800 transition-all"><RefreshCw className={clsx("h-4 w-4", loading && "animate-spin")} /></button>
+
+            <button onClick={() => setEnableTTS(!enableTTS)} className={clsx("p-2 rounded-lg border transition-all", enableTTS ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400" : "bg-zinc-900/70 border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800")}>
+              {enableTTS ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+            </button>
+
+            <button
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              className={clsx(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border transition-all text-[10px] font-bold relative group overflow-hidden",
+                autoRefresh
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 shadow-[0_0_15px_rgba(52,211,153,0.1)]"
+                  : "bg-zinc-900/70 border-zinc-700 text-zinc-400 hover:text-white hover:bg-zinc-800"
+              )}
+              title={autoRefresh ? "Live updates every 30s" : "Auto-refresh paused"}
+            >
+              {autoRefresh ? (
+                <>
+                  <div className="absolute inset-0 bg-emerald-400/5 animate-pulse pointer-events-none" />
+                  <Zap className="h-3.5 w-3.5 relative z-10" />
+                  <span className="hidden sm:inline relative z-10">LIVE</span>
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400"></span>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <ZapOff className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">PAUSED</span>
+                </>
+              )}
+            </button>
+          </div>
 
         </header>
 
@@ -595,77 +647,49 @@ export default function CompanyPage() {
                 const diffMins = Math.floor((now.getTime() - announcementTime.getTime()) / 60000)
                 const isRecent = diffMins < 5
                 const isJustNow = diffMins < 1
-                
+
                 return (
-                  <button 
-                    key={a.id} 
-                    ref={el => { itemRefs.current[idx] = el }} 
-                    onClick={() => { setSelectedId(a.id); setMobileView('detail') }} 
+                  <button
+                    key={a.id}
+                    ref={el => { itemRefs.current[idx] = el }}
+                    onClick={() => { setSelectedId(a.id); setMobileView('detail') }}
                     className={clsx(
-                      "w-full text-left px-5 py-5 border-b border-white/[0.03] transition-all group relative", 
-                      isActive ? "bg-white/[0.03]" : "hover:bg-white/[0.015]"
+                      "w-full text-left px-5 py-4 border-b border-white/[0.03] transition-all group relative flex flex-col gap-2",
+                      isActive ? "bg-white/[0.04]" : "hover:bg-white/[0.02]"
                     )}
                   >
-                    <div className="flex flex-col gap-2.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className={clsx(
-                            "text-[10px] font-black tracking-[0.15em] uppercase transition-colors font-mono", 
-                            isActive ? "text-cyan-400" : "text-zinc-500 group-hover:text-zinc-400"
-                          )}>
-                            {a.ticker}
-                          </span>
-                          <div className={clsx("w-1 h-1 rounded-full", a.impact === 'high' ? "bg-emerald-400" : a.impact === 'medium' ? "bg-amber-400" : "bg-zinc-700")} />
-                          {isRecent && (
-                            <span className="flex h-1.5 w-1.5 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {q?.marketCap != null && (
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] text-amber-400 font-bold tabular-nums flex items-baseline gap-0.5">
-                                ₹{formatMcap(q.marketCap)}
-                                <span className="text-[7px] font-black opacity-40 tracking-tighter uppercase ml-[1px]">CR</span>
-                              </span>
-                              <div className="w-0.5 h-0.5 rounded-full bg-zinc-800 mx-0.5" />
-                            </div>
-                          )}
-                          <span className="text-[10px] text-zinc-600 font-bold tabular-nums uppercase">
-                            {isJustNow ? 'JUST NOW' : timeAgo(a.time).replace(' ago', '').toUpperCase()}
-                          </span>
-                        </div>
-                      </div>
+                    <div className="flex items-start justify-between gap-3">
                       <h4 className={clsx(
-                        "text-[14px] leading-tight font-bold transition-colors", 
-                        isActive ? "text-white" : "text-zinc-300 group-hover:text-white"
+                        "text-[13px] leading-snug font-medium transition-colors line-clamp-2 pr-2",
+                        isActive ? "text-cyan-400" : "text-zinc-300 group-hover:text-zinc-100"
                       )}>
                         {a.headline}
                       </h4>
-                      <div className="flex items-center justify-between text-[10px] font-bold tracking-tight">
-                        <div className="flex items-center gap-3">
-                          <span className={clsx(
-                            "px-2 py-0.5 rounded-md border border-white/[0.05] uppercase", 
-                            CATEGORY_COLORS[a.category] || "bg-zinc-900 text-zinc-500"
-                          )}>
-                            {a.category}
-                          </span>
-                          {bookmarks.has(a.id) && (
-                            <Bookmark className="h-3 w-3 text-amber-500 fill-amber-500" />
-                          )}
-                        </div>
-                        
-                        {q && q.price != null && (
-                          <div className="flex items-center gap-3 tabular-nums">
-                            <span className="text-zinc-500">₹{q.price.toLocaleString()}</span>
-                            <span className={clsx(
-                              q.changePercent >= 0 ? "text-emerald-400" : "text-rose-400"
-                            )}>
-                              {q.changePercent >= 0 ? "+" : ""}{q.changePercent.toFixed(1)}%
-                            </span>
-                          </div>
+                      <div className="flex flex-col items-end gap-1 flex-shrink-0 pt-0.5">
+                        <span className={clsx(
+                          "text-[9px] font-medium tracking-tight whitespace-nowrap",
+                          isActive ? "text-cyan-500/80" : "text-zinc-500"
+                        )}>
+                          {isJustNow ? 'Just Now' : timeAgo(a.time).replace(' ago', '')}
+                        </span>
+                        {bookmarks.has(a.id) && (
+                          <Bookmark className="h-3 w-3 text-amber-500 fill-amber-500" />
                         )}
                       </div>
                     </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className={clsx(
+                        "px-1.5 py-0.5 rounded-[4px] text-[9px] font-semibold tracking-wider uppercase border",
+                        CATEGORY_COLORS[a.category] ? `${CATEGORY_COLORS[a.category]} border-current/20` : "bg-zinc-800/50 text-zinc-400 border-zinc-700/50"
+                      )}>
+                        {a.category}
+                      </span>
+                      {isRecent && (
+                        <span className="flex h-1.5 w-1.5 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.8)]" />
+                      )}
+                    </div>
+
                     {isActive && <div className="absolute left-0 top-0 bottom-0 w-1 bg-cyan-500 shadow-[4px_0_12px_rgba(6,182,212,0.4)]" />}
                   </button>
                 )
@@ -675,25 +699,25 @@ export default function CompanyPage() {
 
           <main className={clsx("flex-1 overflow-y-auto scrollbar-thin transition-all duration-300", mobileView === 'detail' ? "flex" : "hidden md:flex")}>
             {selected ? (
-                <div className="w-full max-w-5xl mx-auto p-4 md:p-8 space-y-6 pb-24">
-                  <button onClick={() => setMobileView('list')} className="md:hidden flex items-center gap-2 text-cyan-400 text-xs font-bold mb-4 uppercase"><ArrowLeft className="h-3 w-3" /> BACK TO LIST</button>
+              <div className="w-full max-w-5xl mx-auto p-4 md:p-8 space-y-6 pb-24">
+                <button onClick={() => setMobileView('list')} className="md:hidden flex items-center gap-2 text-cyan-400 text-xs font-bold mb-4 uppercase"><ArrowLeft className="h-3 w-3" /> BACK TO LIST</button>
 
-                  {company?.restricted && (
-                    <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-4 flex items-start gap-4">
-                      <div className="p-2 rounded-xl bg-rose-500/20 text-rose-400">
-                        <AlertTriangle className="h-5 w-5" />
-                      </div>
-                      <div className="flex-1">
-                        <h3 className="text-sm font-bold text-rose-400 uppercase tracking-wider">Trading Restricted (GSM)</h3>
-                        <p className="text-xs text-rose-300/70 mt-1">
-                          This security is currently under Graded Surveillance Measure (GSM) or other trading restrictions. 
-                          Live quote data may be unavailable or limited.
-                        </p>
-                      </div>
+                {company?.restricted && (
+                  <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-4 flex items-start gap-4">
+                    <div className="p-2 rounded-xl bg-rose-500/20 text-rose-400">
+                      <AlertTriangle className="h-5 w-5" />
                     </div>
-                  )}
+                    <div className="flex-1">
+                      <h3 className="text-sm font-bold text-rose-400 uppercase tracking-wider">Trading Restricted (GSM)</h3>
+                      <p className="text-xs text-rose-300/70 mt-1">
+                        This security is currently under Graded Surveillance Measure (GSM) or other trading restrictions.
+                        Live quote data may be unavailable or limited.
+                      </p>
+                    </div>
+                  </div>
+                )}
 
-                  {/* Main Header Card */}
+                {/* Main Header Card */}
                 <div className="glass-card rounded-3xl p-6 border-white/10 relative overflow-hidden">
                   <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 blur-[100px]" />
                   <div className="relative z-10 space-y-4">
@@ -709,36 +733,36 @@ export default function CompanyPage() {
                           <div className="relative flex-shrink-0">
                             <div className="absolute inset-0 w-14 h-14 -translate-x-1 -translate-y-1 bg-cyan-500/10 blur-xl rounded-full" aria-hidden />
                             {companyLogoSrc ? (
-                            <div className="relative flex-shrink-0 rounded-full overflow-hidden border border-white/10 bg-zinc-800 hover:ring-1 hover:ring-white/20 transition-shadow w-12 h-12">
-                              <img
-                                src={companyLogoSrc}
-                                alt=""
-                                width={48}
-                                height={48}
-                                className="w-full h-full object-cover"
-                                loading="lazy"
-                                onError={() => {
-                                  setCompanyLogoSrc((prev) =>
-                                    company?.logoUrlFallback && prev === company.logoUrl
-                                      ? company.logoUrlFallback
-                                      : null
-                                  )
-                                }}
+                              <div className="relative flex-shrink-0 rounded-full overflow-hidden border border-white/10 bg-zinc-800 hover:ring-1 hover:ring-white/20 transition-shadow w-12 h-12">
+                                <img
+                                  src={companyLogoSrc}
+                                  alt=""
+                                  width={48}
+                                  height={48}
+                                  className="w-full h-full object-cover"
+                                  loading="lazy"
+                                  onError={() => {
+                                    setCompanyLogoSrc((prev) =>
+                                      company?.logoUrlFallback && prev === company.logoUrl
+                                        ? company.logoUrlFallback
+                                        : null
+                                    )
+                                  }}
+                                />
+                              </div>
+                            ) : (
+                              <FallbackAvatar
+                                initial={company?.symbol || company?.companyName || scripCode}
+                                size={48}
                               />
-                            </div>
-                          ) : (
-                            <FallbackAvatar
-                              initial={company?.symbol || company?.companyName || scripCode}
-                              size={48}
-                            />
-                          )}
-                            </div>
+                            )}
+                          </div>
                           <div className="space-y-1 min-w-0 flex-1">
                             <h1 className="text-3xl md:text-4xl font-black tracking-tighter text-white">{company?.symbol}</h1>
                             <p className="text-sm text-zinc-500 font-medium">{company?.companyName}</p>
                           </div>
                         </div>
-                        
+
                         {/* Quote Info Row */}
                         {quote && quote.price != null && (
                           <div className="flex items-center gap-3 pt-2">
@@ -763,7 +787,7 @@ export default function CompanyPage() {
                             </button>
                           </div>
                         )}
-                        
+
                         {quote?.changePercent != null && <DrivingEventBadge symbol={company?.symbol || scripCode} scripCode={scripCode} changePercent={quote.changePercent} announcements={announcements} />}
                       </div>
                     </div>
@@ -843,70 +867,107 @@ export default function CompanyPage() {
                   ))}
                 </div>
 
-                    {activeTab === 'fundamentals' ? (
-                      <div className="space-y-12">
-                        <CompanyFundamentals 
-                          scripCode={scripCode} 
-                          marketCapFallback={quote?.marketCap} 
-                          onNoteAction={openOverlay}
-                        />
+                {activeTab === 'fundamentals' ? (
+                  <div className="space-y-12">
+                    <CompanyFundamentals
+                      scripCode={scripCode}
+                      marketCapFallback={quote?.marketCap}
+                    />
 
-                      </div>
-                    ) : activeTab === 'announcements' ? (
+                  </div>
+                ) : activeTab === 'announcements' ? (
 
 
                   <>
                     <RiskAlert text={selected.headline} />
-                    <AISummaryPanel 
-                      headline={selected.headline} 
-                      summary={selected.summary} 
-                      category={selected.category} 
-                      subCategory={selected.subCategory} 
-                      announcementId={selected.id} 
-                      pdfUrl={selected.pdfUrl} 
-                      time={selected.time} 
-                      ticker={selected.ticker} 
-                      scripCode={scripCode} 
-                      company={selected.company} 
-                      impact={selected.impact} 
+                    <AISummaryPanel
+                      headline={selected.headline}
+                      summary={selected.summary}
+                      category={selected.category}
+                      subCategory={selected.subCategory}
+                      announcementId={selected.id}
+                      pdfUrl={selected.pdfUrl}
+                      time={selected.time}
+                      ticker={selected.ticker}
+                      scripCode={scripCode}
+                      company={selected.company}
+                      impact={selected.impact}
                       onFullScreenChat={() => {
                         setOpenChatMaximized(true)
                         setShowChat(true)
                       }}
-                      quote={quote ? { 
-                        currentPrice: quote.price, 
-                        previousClose: quote.previousClose, 
-                        change: quote.change, 
-                        changePercent: quote.changePercent, 
-                        priceAtAnnouncement: priceAtAnnouncement, 
-                        alphaSinceAnnouncement: priceAtAnnouncement && quote.price ? ((quote.price - priceAtAnnouncement) / priceAtAnnouncement) * 100 : null 
-                      } : undefined} 
+                      quote={quote ? {
+                        currentPrice: quote.price,
+                        previousClose: quote.previousClose,
+                        change: quote.change,
+                        changePercent: quote.changePercent,
+                        priceAtAnnouncement: priceAtAnnouncement,
+                        alphaSinceAnnouncement: priceAtAnnouncement && quote.price ? ((quote.price - priceAtAnnouncement) / priceAtAnnouncement) * 100 : null
+                      } : undefined}
                     />
 
                     {/* Recent Announcements - EXACT match to announcements page */}
                     <details className="glass-card rounded-2xl" open>
                       <summary className="flex items-center justify-between p-4 cursor-pointer hover:bg-white/5 transition-colors list-none">
-                        <div className="flex items-center gap-3 flex-1">
+                        <div className="flex items-center gap-3 flex-1 relative overflow-visible">
                           <FileText className="h-4 w-4 text-cyan-400 shrink-0" />
                           <AnimatePresence mode="wait">
                             {!isLocalSearchOpen ? (
-                              <motion.h3 
-                                initial={{ opacity: 0, x: -10 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                exit={{ opacity: 0, x: -10 }}
-                                className="font-semibold text-white text-sm"
-                              >
-                                Recent Announcements
-                              </motion.h3>
+                              <div className="relative">
+                                <motion.div
+                                  initial={{ opacity: 0, x: -10 }}
+                                  animate={{ opacity: 1, x: 0 }}
+                                  exit={{ opacity: 0, x: -10 }}
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    setIsCategoryDropdownOpen(!isCategoryDropdownOpen)
+                                  }}
+                                  className="flex items-center gap-2 cursor-pointer group"
+                                >
+                                  <h3 className="font-semibold text-white text-sm group-hover:text-cyan-400 transition-colors">
+                                    {selectedCategory === 'All Announcements' ? 'Recent Announcements' : selectedCategory}
+                                  </h3>
+                                  <ChevronDown className={clsx("h-3.5 w-3.5 text-zinc-500 group-hover:text-cyan-400 transition-transform", isCategoryDropdownOpen && "rotate-180")} />
+                                </motion.div>
+
+                                <AnimatePresence>
+                                  {isCategoryDropdownOpen && (
+                                    <motion.div
+                                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                      className="absolute top-full left-0 mt-2 w-64 max-h-[300px] overflow-y-auto rounded-xl border border-white/10 bg-zinc-950/95 backdrop-blur-xl shadow-2xl z-50 py-1 scrollbar-thin flex flex-col"
+                                    >
+                                      {uniqueCategories.map(cat => (
+                                        <button
+                                          key={cat}
+                                          onClick={(e) => {
+                                            e.preventDefault()
+                                            setSelectedCategory(cat)
+                                            setIsCategoryDropdownOpen(false)
+                                          }}
+                                          className={clsx(
+                                            "px-4 py-2.5 text-left flex items-center justify-between hover:bg-white/5 transition-colors group/item",
+                                            selectedCategory === cat ? "bg-cyan-500/10 text-cyan-400" : "text-zinc-300"
+                                          )}
+                                        >
+                                          <span className="text-sm font-medium truncate group-hover/item:text-white transition-colors">{cat}</span>
+                                          {selectedCategory === cat && <Sparkles className="h-3 w-3" />}
+                                        </button>
+                                      ))}
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+                              </div>
                             ) : (
-                              <motion.div 
+                              <motion.div
                                 initial={{ opacity: 0, width: 0 }}
                                 animate={{ opacity: 1, width: "auto" }}
                                 exit={{ opacity: 0, width: 0 }}
                                 className="flex-1 max-w-[300px]"
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <input 
+                                <input
                                   autoFocus
                                   placeholder="Smart filter..."
                                   value={localSearchQuery}
@@ -922,7 +983,7 @@ export default function CompanyPage() {
                           <span className="px-2 py-0.5 rounded-md bg-cyan-500/20 text-cyan-400 text-xs font-medium">
                             {filteredSidebar.length}
                           </span>
-                          <button 
+                          <button
                             onClick={() => {
                               setIsLocalSearchOpen(!isLocalSearchOpen)
                               if (isLocalSearchOpen) setLocalSearchQuery("")
@@ -938,7 +999,7 @@ export default function CompanyPage() {
                           </button>
                         </div>
                       </summary>
-                      
+
                       {filteredSidebar.length > 0 && (
                         <div className="px-4 pb-2 flex items-center gap-2">
                           {selectedForChat.length === 0 ? (
@@ -972,17 +1033,17 @@ export default function CompanyPage() {
                           )}
                         </div>
                       )}
-                    
+
                       <div className="space-y-2 px-4 pb-4 md:pb-4 max-h-[500px] overflow-y-auto scrollbar-thin">
                         {filteredSidebar.map((a, idx) => (
                           <div
                             key={`${a.id}-${idx}`}
                             className={clsx(
                               "w-full text-left flex flex-col md:flex-row md:items-center md:justify-between gap-3 rounded-2xl border transition-all px-4 py-3",
-                              selectedForChat.includes(a.id) 
-                                ? "border-purple-500/40 bg-purple-500/10 shadow-[0_0_20px_rgba(168,85,247,0.1)]" 
-                                : a.id === selectedId 
-                                  ? "border-cyan-500/40 bg-cyan-500/10 shadow-[0_0_20px_rgba(34,211,238,0.1)]" 
+                              selectedForChat.includes(a.id)
+                                ? "border-purple-500/40 bg-purple-500/10 shadow-[0_0_20px_rgba(168,85,247,0.1)]"
+                                : a.id === selectedId
+                                  ? "border-cyan-500/40 bg-cyan-500/10 shadow-[0_0_20px_rgba(34,211,238,0.1)]"
                                   : "border-white/10 bg-black/40 hover:bg-black/60 hover:border-white/20"
                             )}
                           >
@@ -990,24 +1051,24 @@ export default function CompanyPage() {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  setSelectedForChat(prev => 
-                                    prev.includes(a.id) 
-                                      ? prev.filter(id => id !== a.id) 
+                                  setSelectedForChat(prev =>
+                                    prev.includes(a.id)
+                                      ? prev.filter(id => id !== a.id)
                                       : [...prev, a.id]
                                   )
                                 }}
                                 className={clsx(
                                   "w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-all",
-                                  selectedForChat.includes(a.id) 
-                                    ? "bg-purple-500 border-purple-500" 
+                                  selectedForChat.includes(a.id)
+                                    ? "bg-purple-500 border-purple-500"
                                     : "border-zinc-600 hover:border-purple-400"
                                 )}
                               >
                                 {selectedForChat.includes(a.id) && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
                               </button>
-                              
-                              <button 
-                                onClick={() => setSelectedId(a.id)} 
+
+                              <button
+                                onClick={() => setSelectedId(a.id)}
                                 className="flex-1 text-left min-w-0"
                               >
                                 <p className="text-sm font-semibold text-white truncate">
@@ -1057,155 +1118,155 @@ export default function CompanyPage() {
                       </summary>
                       <div className="px-4 pb-4 space-y-4">
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/5">
-                              <div className="flex items-center justify-between mb-1">
-                                <p className="text-[10px] font-black text-zinc-600 tracking-widest uppercase">Price at News</p>
-                                <Clock className="h-2.5 w-2.5 text-zinc-600" />
-                              </div>
-                              <p className="text-xl font-black text-white tabular-nums">
-                                {priceAtAnnouncement ? `₹${priceAtAnnouncement.toLocaleString('en-IN')}` : "—"}
-                              </p>
-                              <div className="text-[10px] text-cyan-400 mt-1 flex items-center gap-1">
-                                <span className="w-1 h-1 rounded-full bg-cyan-400" />
-                                {(() => {
-                                  const annDate = new Date(selected.time)
-                                  const isPostMarket = annDate.getHours() >= 15 || annDate.getHours() < 9
-                                  return isPostMarket ? "Post Market" : "During Market"
-                                })()}
-                              </div>
+                          <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/5">
+                            <div className="flex items-center justify-between mb-1">
+                              <p className="text-[10px] font-black text-zinc-600 tracking-widest uppercase">Price at News</p>
+                              <Clock className="h-2.5 w-2.5 text-zinc-600" />
                             </div>
-                            <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/5">
-                              <div className="flex items-center justify-between mb-1">
-                                <p className="text-[10px] font-black text-zinc-600 tracking-widest uppercase">Alpha Since</p>
-                                <TrendingUp className="h-2.5 w-2.5 text-zinc-600" />
-                              </div>
-                              {priceAtAnnouncement && quote?.price ? (
-                                <>
-                                  <div className="flex items-baseline gap-1">
-                                    <p className={clsx("text-xl font-black tabular-nums", (quote.price - priceAtAnnouncement) >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                                      {((quote.price - priceAtAnnouncement) / priceAtAnnouncement * 100).toPrecision(3)}%
-                                    </p>
-                                  </div>
-                                  <div className="mt-2 h-1 w-full bg-white/5 rounded-full overflow-hidden">
-                                    <div 
-                                      className={clsx(
-                                        "h-full transition-all duration-1000",
-                                        (quote.price - priceAtAnnouncement) >= 0 ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" : "bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.5)]"
-                                      )}
-                                      style={{ width: `${Math.min(Math.abs((quote.price - priceAtAnnouncement) / priceAtAnnouncement * 100) * 10, 100)}%` }}
-                                    />
-                                  </div>
-                                  <div className="flex items-center gap-2 mt-1">
-                                    <span className={clsx(
-                                      "px-1.5 py-0.5 rounded text-[9px] font-semibold flex items-center gap-1",
-                                      (quote.price - priceAtAnnouncement) >= 0 ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
-                                    )}>
-                                      <div className={clsx("w-1 h-1 rounded-full animate-pulse", (quote.price - priceAtAnnouncement) >= 0 ? "bg-emerald-400" : "bg-rose-400")} />
-                                      {(() => {
-                                        const alpha = (quote.price - priceAtAnnouncement) / priceAtAnnouncement * 100
-                                        if (alpha >= 5) return "Explosive Growth"
-                                        if (alpha >= 2) return "Strong Momentum"
-                                        if (alpha >= 0) return "Positive Drift"
-                                        if (alpha <= -5) return "Sharp Rejection"
-                                        if (alpha <= -2) return "Bearish Pressure"
-                                        return "Neutral / Steady"
-                                      })()}
-                                    </span>
-                                  </div>
-                                </>
-                              ) : <p className="text-xl font-black text-zinc-700">—</p>}
+                            <p className="text-xl font-black text-white tabular-nums">
+                              {priceAtAnnouncement ? `₹${priceAtAnnouncement.toLocaleString('en-IN')}` : "—"}
+                            </p>
+                            <div className="text-[10px] text-cyan-400 mt-1 flex items-center gap-1">
+                              <span className="w-1 h-1 rounded-full bg-cyan-400" />
+                              {(() => {
+                                const annDate = new Date(selected.time)
+                                const isPostMarket = annDate.getHours() >= 15 || annDate.getHours() < 9
+                                return isPostMarket ? "Post Market" : "During Market"
+                              })()}
                             </div>
-                            <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/5">
-                              <p className="text-[10px] font-black text-zinc-600 tracking-widest mb-1 uppercase">Market Cap</p>
-                              <p className="text-xl font-black text-amber-500 tabular-nums">
-                                {quote?.marketCap ? <>₹{formatMcap(quote.marketCap)}<span className="text-xs ml-1 opacity-50 font-black">CR</span></> : "—"}
-                              </p>
-                            </div>
-                            <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/5">
-                              <p className="text-[10px] font-black text-zinc-600 tracking-widest mb-1 uppercase">Volume</p>
-                              <p className="text-xl font-black text-white tabular-nums">{quote?.volume ? quote.volume.toLocaleString('en-IN') : "—"}</p>
-                            </div>
-
-                            <div className="col-span-2 bg-white/[0.03] rounded-2xl p-4 border border-white/5">
-                              <div className="flex items-center justify-between mb-3">
-                                <p className="text-[10px] font-black text-zinc-600 tracking-widest uppercase">Day Range</p>
-                                <p className="text-[10px] font-bold text-zinc-400 tabular-nums">
-                                  ₹{quote?.dayLow?.toLocaleString('en-IN') || "—"} - ₹{quote?.dayHigh?.toLocaleString('en-IN') || "—"}
-                                </p>
-                              </div>
-                              <div className="relative h-1.5 w-full bg-white/5 rounded-full mt-2">
-                                {quote?.dayLow && quote?.dayHigh && quote?.price && (
-                                  <div 
-                                    className="absolute h-full bg-cyan-500/30 rounded-full"
-                                    style={{ 
-                                      left: '0%', 
-                                      right: '0%' 
-                                    }}
-                                  />
-                                )}
-                                {quote?.dayLow && quote?.dayHigh && quote?.price && (
-                                  <div 
-                                    className="absolute top-1/2 -translate-y-1/2 w-1.5 h-4 bg-white border border-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.5)] rounded-full transition-all duration-500"
-                                    style={{ left: `${((quote.price - quote.dayLow) / (quote.dayHigh - quote.dayLow)) * 100}%` }}
-                                  />
-                                )}
-                              </div>
-                              <div className="flex justify-between mt-2">
-                                <span className="text-[8px] font-black text-zinc-700 uppercase">L</span>
-                                <span className="text-[8px] font-black text-white uppercase tabular-nums">₹{quote?.price?.toLocaleString('en-IN') || "—"}</span>
-                                <span className="text-[8px] font-black text-zinc-700 uppercase">H</span>
-                              </div>
-                            </div>
-
-                            <div className="col-span-2 bg-white/[0.03] rounded-2xl p-4 border border-white/5">
-                              <div className="flex items-center justify-between mb-3">
-                                <p className="text-[10px] font-black text-zinc-600 tracking-widest uppercase">52 Week Range</p>
-                                <p className="text-[10px] font-bold text-zinc-400 tabular-nums">
-                                  ₹{quote?.fiftyTwoWeekLow?.toLocaleString('en-IN') || "—"} - ₹{quote?.fiftyTwoWeekHigh?.toLocaleString('en-IN') || "—"}
-                                </p>
-                              </div>
-                              <div className="relative h-1.5 w-full bg-white/5 rounded-full mt-2">
-                                {quote?.fiftyTwoWeekLow && quote?.fiftyTwoWeekHigh && quote?.price && (
-                                  <div 
-                                    className="absolute h-full bg-emerald-500/20 rounded-full"
-                                    style={{ 
-                                      left: '0%', 
-                                      right: '0%' 
-                                    }}
-                                  />
-                                )}
-                                {quote?.fiftyTwoWeekLow && quote?.fiftyTwoWeekHigh && quote?.price && (
-                                  <div 
-                                    className="absolute top-1/2 -translate-y-1/2 w-1.5 h-4 bg-white border border-emerald-500 shadow-[0_0_8px_rgba(52,211,153,0.5)] rounded-full transition-all duration-500"
-                                    style={{ left: `${((quote.price - quote.fiftyTwoWeekLow) / (quote.fiftyTwoWeekHigh - quote.fiftyTwoWeekLow)) * 100}%` }}
-                                  />
-                                )}
-                              </div>
-                              <div className="flex justify-between mt-2">
-                                <span className="text-[8px] font-black text-zinc-700 uppercase">52W L</span>
-                                <span className="text-[8px] font-black text-zinc-500 uppercase tabular-nums">Range: {quote?.fiftyTwoWeekLow && quote?.fiftyTwoWeekHigh ? ((quote.fiftyTwoWeekHigh / quote.fiftyTwoWeekLow - 1) * 100).toFixed(0) + "%" : "—"}</span>
-                                <span className="text-[8px] font-black text-zinc-700 uppercase">52W H</span>
-                              </div>
-                            </div>
-
-                        </div>
-                          <div className="relative rounded-2xl overflow-hidden border border-white/5 h-[400px]">
-                            <LightweightChart symbol={company?.symbol || ""} scripCode={scripCode} exchange="BSE" height={400} targetDate={selected.time} type="area" announcements={announcements} whaleDeals={whaleDeals} highlightedAnnouncementId={selectedId} />
                           </div>
+                          <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/5">
+                            <div className="flex items-center justify-between mb-1">
+                              <p className="text-[10px] font-black text-zinc-600 tracking-widest uppercase">Alpha Since</p>
+                              <TrendingUp className="h-2.5 w-2.5 text-zinc-600" />
+                            </div>
+                            {priceAtAnnouncement && quote?.price ? (
+                              <>
+                                <div className="flex items-baseline gap-1">
+                                  <p className={clsx("text-xl font-black tabular-nums", (quote.price - priceAtAnnouncement) >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                                    {((quote.price - priceAtAnnouncement) / priceAtAnnouncement * 100).toPrecision(3)}%
+                                  </p>
+                                </div>
+                                <div className="mt-2 h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                                  <div
+                                    className={clsx(
+                                      "h-full transition-all duration-1000",
+                                      (quote.price - priceAtAnnouncement) >= 0 ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" : "bg-rose-400 shadow-[0_0_8px_rgba(251,113,133,0.5)]"
+                                    )}
+                                    style={{ width: `${Math.min(Math.abs((quote.price - priceAtAnnouncement) / priceAtAnnouncement * 100) * 10, 100)}%` }}
+                                  />
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className={clsx(
+                                    "px-1.5 py-0.5 rounded text-[9px] font-semibold flex items-center gap-1",
+                                    (quote.price - priceAtAnnouncement) >= 0 ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"
+                                  )}>
+                                    <div className={clsx("w-1 h-1 rounded-full animate-pulse", (quote.price - priceAtAnnouncement) >= 0 ? "bg-emerald-400" : "bg-rose-400")} />
+                                    {(() => {
+                                      const alpha = (quote.price - priceAtAnnouncement) / priceAtAnnouncement * 100
+                                      if (alpha >= 5) return "Explosive Growth"
+                                      if (alpha >= 2) return "Strong Momentum"
+                                      if (alpha >= 0) return "Positive Drift"
+                                      if (alpha <= -5) return "Sharp Rejection"
+                                      if (alpha <= -2) return "Bearish Pressure"
+                                      return "Neutral / Steady"
+                                    })()}
+                                  </span>
+                                </div>
+                              </>
+                            ) : <p className="text-xl font-black text-zinc-700">—</p>}
+                          </div>
+                          <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/5">
+                            <p className="text-[10px] font-black text-zinc-600 tracking-widest mb-1 uppercase">Market Cap</p>
+                            <p className="text-xl font-black text-amber-500 tabular-nums">
+                              {quote?.marketCap ? <>₹{formatMcap(quote.marketCap)}<span className="text-xs ml-1 opacity-50 font-black">CR</span></> : "—"}
+                            </p>
+                          </div>
+                          <div className="bg-white/[0.03] rounded-2xl p-4 border border-white/5">
+                            <p className="text-[10px] font-black text-zinc-600 tracking-widest mb-1 uppercase">Volume</p>
+                            <p className="text-xl font-black text-white tabular-nums">{quote?.volume ? quote.volume.toLocaleString('en-IN') : "—"}</p>
+                          </div>
+
+                          <div className="col-span-2 bg-white/[0.03] rounded-2xl p-4 border border-white/5">
+                            <div className="flex items-center justify-between mb-3">
+                              <p className="text-[10px] font-black text-zinc-600 tracking-widest uppercase">Day Range</p>
+                              <p className="text-[10px] font-bold text-zinc-400 tabular-nums">
+                                ₹{quote?.dayLow?.toLocaleString('en-IN') || "—"} - ₹{quote?.dayHigh?.toLocaleString('en-IN') || "—"}
+                              </p>
+                            </div>
+                            <div className="relative h-1.5 w-full bg-white/5 rounded-full mt-2">
+                              {quote?.dayLow && quote?.dayHigh && quote?.price && (
+                                <div
+                                  className="absolute h-full bg-cyan-500/30 rounded-full"
+                                  style={{
+                                    left: '0%',
+                                    right: '0%'
+                                  }}
+                                />
+                              )}
+                              {quote?.dayLow && quote?.dayHigh && quote?.price && (
+                                <div
+                                  className="absolute top-1/2 -translate-y-1/2 w-1.5 h-4 bg-white border border-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.5)] rounded-full transition-all duration-500"
+                                  style={{ left: `${((quote.price - quote.dayLow) / (quote.dayHigh - quote.dayLow)) * 100}%` }}
+                                />
+                              )}
+                            </div>
+                            <div className="flex justify-between mt-2">
+                              <span className="text-[8px] font-black text-zinc-700 uppercase">L</span>
+                              <span className="text-[8px] font-black text-white uppercase tabular-nums">₹{quote?.price?.toLocaleString('en-IN') || "—"}</span>
+                              <span className="text-[8px] font-black text-zinc-700 uppercase">H</span>
+                            </div>
+                          </div>
+
+                          <div className="col-span-2 bg-white/[0.03] rounded-2xl p-4 border border-white/5">
+                            <div className="flex items-center justify-between mb-3">
+                              <p className="text-[10px] font-black text-zinc-600 tracking-widest uppercase">52 Week Range</p>
+                              <p className="text-[10px] font-bold text-zinc-400 tabular-nums">
+                                ₹{quote?.fiftyTwoWeekLow?.toLocaleString('en-IN') || "—"} - ₹{quote?.fiftyTwoWeekHigh?.toLocaleString('en-IN') || "—"}
+                              </p>
+                            </div>
+                            <div className="relative h-1.5 w-full bg-white/5 rounded-full mt-2">
+                              {quote?.fiftyTwoWeekLow && quote?.fiftyTwoWeekHigh && quote?.price && (
+                                <div
+                                  className="absolute h-full bg-emerald-500/20 rounded-full"
+                                  style={{
+                                    left: '0%',
+                                    right: '0%'
+                                  }}
+                                />
+                              )}
+                              {quote?.fiftyTwoWeekLow && quote?.fiftyTwoWeekHigh && quote?.price && (
+                                <div
+                                  className="absolute top-1/2 -translate-y-1/2 w-1.5 h-4 bg-white border border-emerald-500 shadow-[0_0_8px_rgba(52,211,153,0.5)] rounded-full transition-all duration-500"
+                                  style={{ left: `${((quote.price - quote.fiftyTwoWeekLow) / (quote.fiftyTwoWeekHigh - quote.fiftyTwoWeekLow)) * 100}%` }}
+                                />
+                              )}
+                            </div>
+                            <div className="flex justify-between mt-2">
+                              <span className="text-[8px] font-black text-zinc-700 uppercase">52W L</span>
+                              <span className="text-[8px] font-black text-zinc-500 uppercase tabular-nums">Range: {quote?.fiftyTwoWeekLow && quote?.fiftyTwoWeekHigh ? ((quote.fiftyTwoWeekHigh / quote.fiftyTwoWeekLow - 1) * 100).toFixed(0) + "%" : "—"}</span>
+                              <span className="text-[8px] font-black text-zinc-700 uppercase">52W H</span>
+                            </div>
+                          </div>
+
                         </div>
-                      </details>
+                        <div className="relative rounded-2xl overflow-hidden border border-white/5 h-[400px]">
+                          <LightweightChart symbol={company?.symbol || ""} scripCode={scripCode} exchange="BSE" height={400} targetDate={selected.time} type="area" announcements={announcements} whaleDeals={whaleDeals} highlightedAnnouncementId={selectedId} />
+                        </div>
+                      </div>
+                    </details>
 
-                      <InsiderGravity scripCode={scripCode} ticker={company?.symbol} currentPrice={quote?.price ?? undefined} initialDeals={whaleDeals} />
+                    <InsiderGravity scripCode={scripCode} ticker={company?.symbol} currentPrice={quote?.price ?? undefined} initialDeals={whaleDeals} />
 
-                      <StockNotesPanel 
-                        scripCode={scripCode} 
-                        symbol={company?.symbol || scripCode} 
-                        companyName={company?.companyName || ''} 
-                        currentPrice={quote?.price ?? undefined}
-                        changePercent={quote?.changePercent ?? undefined}
-                      />
+                    <StockNotesPanel
+                      scripCode={scripCode}
+                      symbol={company?.symbol || scripCode}
+                      companyName={company?.companyName || ''}
+                      currentPrice={quote?.price ?? undefined}
+                      changePercent={quote?.changePercent ?? undefined}
+                    />
 
-                      {/* Company Profile */}
+                    {/* Company Profile */}
                     <details className="glass-card rounded-2xl border-white/10" open>
                       <summary className="p-4 cursor-pointer flex items-center justify-between">
                         <h3 className="text-sm font-black tracking-widest uppercase flex items-center gap-2">
@@ -1292,14 +1353,14 @@ export default function CompanyPage() {
       <FilterModal isOpen={showFilterModal} onClose={() => setShowFilterModal(false)} onApply={setFilters} initialFilters={filters} />
       <SearchModal isOpen={showSearchModal} onClose={() => setShowSearchModal(false)} onSelectStock={s => { router.push(`/company/${s.scripCode}`); setShowSearchModal(false) }} />
       {selected && <SpeedyPipChat announcement={selected} isOpen={showChat} onClose={() => { setShowChat(false); setSelectedForChat([]); setOpenChatMaximized(false) }} companyAnnouncements={announcements} preSelectedDocIds={selectedForChat} initialMaximized={openChatMaximized} />}
-      
-        <ResearchNoteOverlay 
-          isOpen={overlayOpen}
-          onClose={() => { setOverlayOpen(false); setOverlayContext({}) }}
-          context={researchContext}
-          initialTitle={overlayContext.title}
-          initialContent={overlayContext.content}
-        />
+
+      <ResearchNoteOverlay
+        isOpen={overlayOpen}
+        onClose={() => { setOverlayOpen(false); setOverlayContext({}) }}
+        context={researchContext}
+        initialTitle={overlayContext.title}
+        initialContent={overlayContext.content}
+      />
 
     </div>
   )

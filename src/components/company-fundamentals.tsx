@@ -24,6 +24,7 @@ import { fetchWithTimeout } from "@/lib/fetch-with-timeout"
 import {
   OverviewCard,
   FinancialSummaryCards,
+  FinancialSummaryCardsSkeleton,
   QuarterlyResultsTable,
   IncomeStatementTable,
   BalanceSheetTable,
@@ -31,12 +32,12 @@ import {
   RatiosTable,
   ShareholdingsSection,
 } from "@/components/fundamentals"
+import { NotesDrawer } from "@/components/notes-drawer"
 
 interface FundamentalsProps {
   scripCode: string
   /** BSE quote marketCap (rupees) - fallback when FinEdge market_cap is 0/undefined */
   marketCapFallback?: number | null
-  onNoteAction?: (context: { title: string; content: string; type: "note" | "ai" }) => void
 }
 
 interface RatioRow {
@@ -79,7 +80,7 @@ interface QuoteItem {
   market_cap?: number
 }
 
-export function CompanyFundamentals({ scripCode, marketCapFallback: marketCapFallbackProp, onNoteAction }: FundamentalsProps) {
+export function CompanyFundamentals({ scripCode, marketCapFallback: marketCapFallbackProp }: FundamentalsProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [profile, setProfile] = useState<Record<string, unknown> | null>(null)
@@ -107,6 +108,22 @@ export function CompanyFundamentals({ scripCode, marketCapFallback: marketCapFal
   const [priceRatios, setPriceRatios] = useState<{ pe?: number; pb?: number; ps?: number }[]>([])
   const [industryPe, setIndustryPe] = useState<number | null>(null)
   const [bseMarketCap, setBseMarketCap] = useState<number | null>(null)
+  const [isNotesOpen, setIsNotesOpen] = useState(false)
+
+  // Global 'N' shortcut for Notes Drawer
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input/textarea
+      if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") return
+
+      if (e.key.toLowerCase() === 'n' && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault()
+        setIsNotesOpen(prev => !prev)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -207,7 +224,7 @@ export function CompanyFundamentals({ scripCode, marketCapFallback: marketCapFal
       fetchWithTimeout(`${base}/shareholdings/pattern/${scripCode}?period=quarterly`, { timeoutMs: 10000 })
         .then((r) => r.json())
         .then((d) =>
-          cancelled ? null : setShareholding(d?.columns ? { columns: d.columns, rows: d.rows ?? [] } : null)
+          cancelled ? null : setShareholding(d?.columns ? { columns: d.columns, rows: d.data ?? [] } : null)
         )
         .catch(() => (cancelled ? null : setShareholding(null))),
       fetchWithTimeout(`${base}/dividend/${scripCode}`, { timeoutMs: 10000 })
@@ -258,9 +275,24 @@ export function CompanyFundamentals({ scripCode, marketCapFallback: marketCapFal
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 gap-4">
-        <Loader2 className="h-8 w-8 text-cyan-400 animate-spin" />
-        <span className="text-[10px] font-black tracking-widest text-zinc-600 uppercase">ANALYZING FUNDAMENTALS</span>
+      <div className="space-y-12 pb-24">
+        <div className="flex flex-col items-center justify-center py-16 gap-4">
+          <Loader2 className="h-8 w-8 text-cyan-400 animate-spin" />
+          <span className="text-[10px] font-black tracking-widest text-zinc-600 uppercase">ANALYZING FUNDAMENTALS</span>
+        </div>
+        <FinancialSummaryCardsSkeleton />
+        <div className="space-y-6">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="rounded-3xl bg-zinc-950/50 border border-white/10 overflow-hidden p-6">
+              <div className="h-6 w-48 rounded bg-zinc-800/60 animate-pulse mb-6" />
+              <div className="space-y-3">
+                {[1, 2, 3, 4, 5].map((j) => (
+                  <div key={j} className="h-4 rounded bg-zinc-800/40 animate-pulse" style={{ width: `${60 + j * 8}%` }} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
@@ -268,26 +300,29 @@ export function CompanyFundamentals({ scripCode, marketCapFallback: marketCapFal
   const profileObj = profile as { sector?: string; industry?: string; macro_sector?: string; sub_industry?: string; market_cap?: number } | null
 
   return (
-    <div className="space-y-12 pb-24">
-        <OverviewCard
-          scripCode={scripCode}
-          profile={profileObj}
-          quote={quote}
-          marketCapFallback={marketCapFallback}
-          priceRatios={priceRatios}
-          ratios={[...ratios, ...ratiosEf]}
-          industryPe={industryPe}
-          onNoteAction={onNoteAction}
-        />
+    <div className="space-y-12 pb-24 relative">
+      <NotesDrawer
+        scripCode={scripCode}
+        isOpen={isNotesOpen}
+        onClose={() => setIsNotesOpen(false)}
+      />
+      <OverviewCard
+        scripCode={scripCode}
+        profile={profileObj}
+        quote={quote}
+        marketCapFallback={marketCapFallback}
+        priceRatios={priceRatios}
+        ratios={[...ratios, ...ratiosEf]}
+        industryPe={industryPe}
+      />
 
-      <FinancialSummaryCards plAnnual={financialsPlAnnual} cfAnnual={financialsCfAnnual} onNoteAction={onNoteAction} />
+      <FinancialSummaryCards plAnnual={financialsPlAnnual} cfAnnual={financialsCfAnnual} />
 
       <div className="space-y-8">
         <QuarterlyResultsTable
           scripCode={scripCode}
           dataConsolidated={financialsPlQuarterly.length > 0 ? financialsPlQuarterly : null}
           dataStandalone={financialsPlQuarterlyStandalone.length > 0 ? financialsPlQuarterlyStandalone : null}
-          onNoteAction={onNoteAction}
         />
 
         <IncomeStatementTable
@@ -295,21 +330,18 @@ export function CompanyFundamentals({ scripCode, marketCapFallback: marketCapFal
           dataConsolidated={financialsPlAnnual.length > 0 ? financialsPlAnnual : null}
           dataStandalone={financialsPlStandalone.length > 0 ? financialsPlStandalone : null}
           dataTtm={financialsPlTtm.length > 0 ? financialsPlTtm : null}
-          onNoteAction={onNoteAction}
         />
 
         <BalanceSheetTable
           scripCode={scripCode}
           dataConsolidated={financialsBsAnnual.length > 0 ? financialsBsAnnual : null}
           dataStandalone={financialsBsStandalone.length > 0 ? financialsBsStandalone : null}
-          onNoteAction={onNoteAction}
         />
 
         <CashFlowTable
           scripCode={scripCode}
           dataConsolidated={financialsCfAnnual.length > 0 ? financialsCfAnnual : null}
           dataStandalone={financialsCfStandalone.length > 0 ? financialsCfStandalone : null}
-          onNoteAction={onNoteAction}
         />
 
         <RatiosTable
@@ -322,7 +354,6 @@ export function CompanyFundamentals({ scripCode, marketCapFallback: marketCapFal
           dataStandaloneEf={ratiosEfS.length > 0 ? ratiosEfS : null}
           dataStandaloneLi={ratiosLiS.length > 0 ? ratiosLiS : null}
           dataStandaloneLe={ratiosLeS.length > 0 ? ratiosLeS : null}
-          onNoteAction={onNoteAction}
         />
       </div>
 
@@ -337,24 +368,27 @@ export function CompanyFundamentals({ scripCode, marketCapFallback: marketCapFal
             </div>
             <div className="h-80 p-6">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart
+                <BarChart
                   data={[...financialsPlAnnual].reverse().map((r) => ({
                     period: String(r.header ?? r.year ?? ""),
                     revenue: Number(r.revenueFromOperations ?? 0) / 1e7,
                     pat: Number(r.profitLossForPeriod ?? 0) / 1e7,
                   }))}
+                  barGap={4}
+                  margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
                 >
-                  <XAxis dataKey="period" stroke="#3f3f46" fontSize={9} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#3f3f46" fontSize={9} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}Cr`} />
+                  <XAxis dataKey="period" stroke="#3f3f46" fontSize={10} tickLine={false} axisLine={false} tickMargin={12} />
+                  <YAxis stroke="#3f3f46" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}Cr`} />
                   <Tooltip
-                    contentStyle={{ background: "#09090b", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "12px", fontSize: "11px" }}
-                    labelStyle={{ color: "#a1a1aa", marginBottom: "4px", fontWeight: "bold" }}
+                    contentStyle={{ background: "#09090b", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "12px", fontSize: "11px", boxShadow: "0 10px 40px -10px rgba(0,0,0,0.5)" }}
+                    labelStyle={{ color: "#a1a1aa", marginBottom: "6px", fontWeight: "900", textTransform: "uppercase", letterSpacing: "1px" }}
                     formatter={(value: number | undefined) => [value != null ? `₹${value.toFixed(1)} Cr` : "", ""]}
+                    cursor={{ fill: 'rgba(255,255,255,0.02)' }}
                   />
                   <Legend iconType="circle" wrapperStyle={{ fontSize: "10px", paddingTop: "20px" }} />
-                  <Line type="monotone" dataKey="revenue" stroke="#22d3ee" strokeWidth={3} dot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }} activeDot={{ r: 6, strokeWidth: 0 }} name="Revenue" />
-                  <Line type="monotone" dataKey="pat" stroke="#a78bfa" strokeWidth={3} dot={{ r: 4, fill: "#a78bfa", strokeWidth: 0 }} activeDot={{ r: 6, strokeWidth: 0 }} name="PAT" />
-                </LineChart>
+                  <Bar dataKey="revenue" fill="#22d3ee" radius={[4, 4, 0, 0]} name="Revenue (Cr)" maxBarSize={40} />
+                  <Bar dataKey="pat" fill="#a78bfa" radius={[4, 4, 0, 0]} name="PAT (Cr)" maxBarSize={40} />
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </div>

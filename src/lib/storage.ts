@@ -21,6 +21,7 @@ export interface WatchlistItem {
   symbol: string
   name: string
   addedAt: string
+  addedPrice?: number
   order: number
   groupId?: string
   alertPrice?: number
@@ -72,6 +73,41 @@ export interface UserSettings {
   watchlistPosition: 'right' | 'left' | 'bottom'
   autoRefreshInterval: number
   showMiniCharts: boolean
+  watchlistColumns: string[]
+}
+
+const DEFAULT_USER_SETTINGS: UserSettings = {
+  theme: 'dark',
+  watchlistPosition: 'right',
+  autoRefreshInterval: 30000,
+  showMiniCharts: true,
+  watchlistColumns: ['chart', 'dayRange', 'volume', 'marketCap', 'sinceAdded']
+}
+
+export function getSettings(): UserSettings {
+  if (!isBrowser()) return DEFAULT_USER_SETTINGS
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.settings)
+    if (data) {
+      const parsed = JSON.parse(data) as Partial<UserSettings>
+      // ensure new watchlistColumns array defaults to exist
+      return { ...DEFAULT_USER_SETTINGS, ...parsed, watchlistColumns: parsed.watchlistColumns || DEFAULT_USER_SETTINGS.watchlistColumns }
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_USER_SETTINGS
+}
+
+export function saveSettings(settings: UserSettings): void {
+  if (!isBrowser()) return
+  localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(settings))
+  window.dispatchEvent(new CustomEvent('settings-updated', { detail: settings }))
+}
+
+export function updateSettings(updates: Partial<UserSettings>): UserSettings {
+  const current = getSettings()
+  const updated = { ...current, ...updates }
+  saveSettings(updated)
+  return updated
 }
 
 function isBrowser(): boolean {
@@ -178,7 +214,7 @@ export function addNote(note: Omit<StockNote, 'id' | 'createdAt' | 'updatedAt'>)
 
 export function updateNote(id: string, updates: Partial<Omit<StockNote, 'id' | 'createdAt'>>): StockNote[] {
   const current = getNotes()
-  const updated = current.map(n => 
+  const updated = current.map(n =>
     n.id === id ? { ...n, ...updates, updatedAt: new Date().toISOString() } : n
   )
   saveNotes(updated)
@@ -194,7 +230,7 @@ export function deleteNote(id: string): StockNote[] {
 
 export function toggleNotePin(id: string): StockNote[] {
   const current = getNotes()
-  const updated = current.map(n => 
+  const updated = current.map(n =>
     n.id === id ? { ...n, isPinned: !n.isPinned, updatedAt: new Date().toISOString() } : n
   )
   saveNotes(updated)
@@ -243,7 +279,7 @@ export function checkPriceAlerts(quotes: Record<string, { price: number }>): Pri
     if (alert.triggered) return alert
     const quote = quotes[alert.scripCode]
     if (!quote) return alert
-    const shouldTrigger = 
+    const shouldTrigger =
       (alert.direction === 'above' && quote.price >= alert.targetPrice) ||
       (alert.direction === 'below' && quote.price <= alert.targetPrice)
     if (shouldTrigger) {
@@ -340,16 +376,15 @@ export function deleteWatchlistGroup(id: string): WatchlistGroup[] {
   const updated = current.filter(g => g.id !== id)
   saveWatchlistGroups(updated)
   const watchlist = getWatchlist()
-  const updatedWatchlist = watchlist.map(item => 
-    item.groupId === id ? { ...item, groupId: 'default' } : item
-  )
+  // Remove all stocks belonging to the deleted group as per user requirement
+  const updatedWatchlist = watchlist.filter(item => item.groupId !== id)
   saveWatchlist(updatedWatchlist)
   return updated
 }
 
 export function moveToGroup(scripCode: string, groupId: string): WatchlistItem[] {
   const current = getWatchlist()
-  const updated = current.map(item => 
+  const updated = current.map(item =>
     item.scripCode === scripCode ? { ...item, groupId } : item
   )
   saveWatchlist(updated)
